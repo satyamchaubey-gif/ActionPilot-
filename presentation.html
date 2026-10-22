@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <style>
     :root {
       --bg: #0b0f19;
@@ -248,7 +249,7 @@
       width: 100%;
     }
 
-    /* Card styling */
+    /* Card styling with 3D Depth */
     .deck-card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
@@ -258,23 +259,29 @@
       position: relative;
       overflow: hidden;
       backdrop-filter: blur(16px);
-      transition: transform 0.2s ease, border-color 0.2s ease;
+      transform-style: preserve-3d;
+      perspective: 1000px;
+      transition: transform 0.15s ease-out, border-color 0.2s ease, box-shadow 0.2s ease;
+      will-change: transform;
     }
 
     .deck-card:hover {
-      border-color: rgba(255, 255, 255, 0.18);
-      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.25);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 25px var(--primary-glow);
     }
 
     .deck-card.featured {
-      border-color: rgba(59, 130, 246, 0.4);
-      background: linear-gradient(180deg, rgba(30, 58, 138, 0.2) 0%, rgba(18, 24, 38, 0.9) 100%);
+      border-color: rgba(59, 130, 246, 0.5);
+      background: linear-gradient(180deg, rgba(30, 58, 138, 0.25) 0%, rgba(18, 24, 38, 0.95) 100%);
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5), 0 0 20px rgba(59, 130, 246, 0.2);
     }
 
     .card-icon {
       font-size: 2rem;
       margin-bottom: 14px;
       display: inline-block;
+      transform: translateZ(30px);
+      filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.4));
     }
 
     .card-title {
@@ -282,12 +289,14 @@
       font-weight: 700;
       margin-bottom: 10px;
       letter-spacing: -0.01em;
+      transform: translateZ(24px);
     }
 
     .card-body {
       color: var(--text-muted);
       font-size: 0.95rem;
       line-height: 1.6;
+      transform: translateZ(16px);
     }
 
     .card-tag {
@@ -300,6 +309,7 @@
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.1);
       color: #cbd5e1;
+      transform: translateZ(22px);
     }
 
     /* Pipeline / Flow diagram */
@@ -514,6 +524,7 @@
 </head>
 <body>
   <div class="bg-mesh"></div>
+  <canvas id="bg-3d-canvas" style="position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none;"></canvas>
 
   <div class="deck-container">
     <!-- Top Bar -->
@@ -525,6 +536,9 @@
       </div>
 
       <div class="top-actions">
+        <a class="nav-btn" href="ActionPilot_Pitch_Deck.pptx" download style="border-color: #f59e0b; color: #fbbf24; background: rgba(245, 158, 11, 0.12); font-weight: 700;">
+          <span>📥 Download .PPTX</span>
+        </a>
         <button class="nav-btn" onclick="toggleNotes()" title="Toggle Speaker Script (S)">
           <span>🎙️ Speaker Script (S)</span>
         </button>
@@ -955,8 +969,108 @@
       }
     });
 
+    // 3D Card Tilt Physics
+    function init3DCardTilt() {
+      document.querySelectorAll('.deck-card').forEach(card => {
+        card.addEventListener('mousemove', (e) => {
+          const rect = card.getBoundingClientRect();
+          const x = e.clientX - rect.left - rect.width / 2;
+          const y = e.clientY - rect.top - rect.height / 2;
+          const rotX = -(y / (rect.height / 2)) * 8;
+          const rotY = (x / (rect.width / 2)) * 8;
+          card.style.transform = `perspective(1000px) rotateX(${rotX}deg) rotateY(${rotY}deg) scale3d(1.02, 1.02, 1.02)`;
+        });
+
+        card.addEventListener('mouseleave', () => {
+          card.style.transform = 'perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
+        });
+      });
+    }
+
+    // Three.js 3D Background Engine
+    function init3DBackground() {
+      if (typeof THREE === 'undefined') return;
+
+      const canvas = document.getElementById('bg-3d-canvas');
+      if (!canvas) return;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 2000);
+      camera.position.z = 700;
+
+      const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      // 3D Floating Geometry 1: Wireframe Icosahedron
+      const geo1 = new THREE.IcosahedronGeometry(280, 1);
+      const mat1 = new THREE.MeshBasicMaterial({ color: 0x3b82f6, wireframe: true, transparent: true, opacity: 0.15 });
+      const mesh1 = new THREE.Mesh(geo1, mat1);
+      scene.add(mesh1);
+
+      // 3D Floating Geometry 2: Inner Dodecahedron
+      const geo2 = new THREE.DodecahedronGeometry(180, 0);
+      const mat2 = new THREE.MeshBasicMaterial({ color: 0x10b981, wireframe: true, transparent: true, opacity: 0.12 });
+      const mesh2 = new THREE.Mesh(geo2, mat2);
+      scene.add(mesh2);
+
+      // 3D Particle Cloud
+      const particleCount = 180;
+      const positions = new Float32Array(particleCount * 3);
+      for (let i = 0; i < particleCount * 3; i += 3) {
+        positions[i] = (Math.random() - 0.5) * 1200;
+        positions[i + 1] = (Math.random() - 0.5) * 800;
+        positions[i + 2] = (Math.random() - 0.5) * 800;
+      }
+      const particleGeo = new THREE.BufferGeometry();
+      particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const particleMat = new THREE.PointsMaterial({ color: 0x60a5fa, size: 3.5, transparent: true, opacity: 0.5 });
+      const particles = new THREE.Points(particleGeo, particleMat);
+      scene.add(particles);
+
+      let mouseX = 0;
+      let mouseY = 0;
+      let targetX = 0;
+      let targetY = 0;
+
+      window.addEventListener('mousemove', (e) => {
+        mouseX = (e.clientX - window.innerWidth / 2) * 0.4;
+        mouseY = (e.clientY - window.innerHeight / 2) * 0.4;
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        targetX += (mouseX - targetX) * 0.05;
+        targetY += (mouseY - targetY) * 0.05;
+
+        mesh1.rotation.x += 0.002;
+        mesh1.rotation.y += 0.003;
+        mesh2.rotation.x -= 0.0025;
+        mesh2.rotation.y -= 0.002;
+
+        particles.rotation.y += 0.0008;
+
+        camera.position.x = targetX * 0.6;
+        camera.position.y = -targetY * 0.6;
+        camera.lookAt(scene.position);
+
+        renderer.render(scene, camera);
+      }
+
+      animate();
+    }
+
     // Initialize
     updateSlide();
+    init3DCardTilt();
+    window.addEventListener('load', init3DBackground);
   </script>
 </body>
 </html>
