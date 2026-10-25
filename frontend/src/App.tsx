@@ -776,24 +776,11 @@ export default function App() {
   function loadDemoVoiceMemo(type: "launch" | "incident" | "strategy") {
     let text = "";
     if (type === "launch") {
-      text = "Speaker 1 (Lead): Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck?\nSpeaker 2 (Priya): I will deliver the revised launch plan and deck by 2026-11-06.\nSpeaker 3 (Alex): I will verify the database indexes and update the deployment script before Friday.";
-      setSpeakerTurns([
-        { id: "t1", speaker: "Speaker 1 (Lead)", text: "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck?", timestamp: "10:00:15 AM" },
-        { id: "t2", speaker: "Speaker 2 (Priya)", text: "I will deliver the revised launch plan and deck by 2026-11-06.", timestamp: "10:00:32 AM" },
-        { id: "t3", speaker: "Speaker 3 (Alex)", text: "I will verify the database indexes and update the deployment script before Friday.", timestamp: "10:00:48 AM" },
-      ]);
+      text = "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck? Priya: I will deliver the revised launch plan and deck by 2026-11-06. Alex: I will verify the database indexes and update the deployment script before Friday.";
     } else if (type === "incident") {
-      text = "Speaker 1 (Lead): Emergency incident response: we detected credential leakage. Alex, revoke all API keys immediately.\nSpeaker 2 (Alex): Revoking keys now and rotating tokens. Security post-mortem meeting scheduled for 2026-11-04.";
-      setSpeakerTurns([
-        { id: "t1", speaker: "Speaker 1 (Lead)", text: "Emergency incident response: we detected credential leakage. Alex, revoke all API keys immediately.", timestamp: "11:15:02 AM" },
-        { id: "t2", speaker: "Speaker 2 (Alex)", text: "Revoking keys now and rotating tokens. Security post-mortem meeting scheduled for 2026-11-04.", timestamp: "11:15:20 AM" },
-      ]);
+      text = "Emergency incident response meeting: we detected credential leakage. Alex, revoke all API keys immediately. Alex: Revoking keys now and rotating tokens. Security post-mortem meeting scheduled for 2026-11-04.";
     } else {
-      text = "Speaker 1 (Lead): Moving to executive strategy: Sarah, will vendor proposals be completed this month?\nSpeaker 2 (Sarah): Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.";
-      setSpeakerTurns([
-        { id: "t1", speaker: "Speaker 1 (Lead)", text: "Moving to executive strategy: Sarah, will vendor proposals be completed this month?", timestamp: "02:30:10 PM" },
-        { id: "t2", speaker: "Speaker 2 (Sarah)", text: "Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.", timestamp: "02:30:35 PM" },
-      ]);
+      text = "Moving to executive strategy: Sarah, will vendor proposals be completed this month? Sarah: Finalizing Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.";
     }
     accumulatedTranscriptRef.current = text;
     transcriptRef.current = text;
@@ -801,7 +788,7 @@ export default function App() {
     setLiveInterimText("");
     setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
     setUploadText(text);
-    notify("Loaded pitch scenario into Multi-Speaker Voice Studio!");
+    notify("Loaded meeting scenario into Voice Studio!");
   }
 
   // Feature 2: 1-Click Demo Preset Loader
@@ -1921,7 +1908,7 @@ export default function App() {
                     <Clock size={14} /> VOICE MEMO & MEETING ARCHIVE
                   </div>
                   <h1>Meeting notes & history</h1>
-                  <p>All recorded voice memos and multi-voice conferences are saved here with diarized transcripts and task extraction.</p>
+                  <p>All recorded voice memos and team meetings are saved here with transcripts and evidence-linked task extraction.</p>
                 </div>
                 <button className="primary" onClick={startVoiceRecording}>
                   <Mic size={14} /> New Voice Recording
@@ -1934,12 +1921,12 @@ export default function App() {
                   <input
                     value={meetingSearch}
                     onChange={(e) => setMeetingSearch(e.target.value)}
-                    placeholder="Search meetings by title, transcript text, or attendee..."
+                    placeholder="Search meetings by title or transcript text..."
                   />
                 </div>
                 <span>
                   {meetings.filter((m) =>
-                    (m.title + " " + m.transcript + " " + (m.speakers || []).join(" "))
+                    (m.title + " " + m.transcript)
                       .toLowerCase()
                       .includes(meetingSearch.toLowerCase())
                   ).length}{" "}
@@ -1957,7 +1944,7 @@ export default function App() {
                 <div className="history-grid">
                   {meetings
                     .filter((m) =>
-                      (m.title + " " + m.transcript + " " + (m.speakers || []).join(" "))
+                      (m.title + " " + m.transcript)
                         .toLowerCase()
                         .includes(meetingSearch.toLowerCase())
                     )
@@ -1975,13 +1962,14 @@ export default function App() {
                         </div>
 
                         <div className="meeting-tags-row">
-                          {(m.speakers && m.speakers.length > 0 ? m.speakers : ["Lead"]).map((spk, i) => (
-                            <span className="meeting-tag highlight" key={i}>
-                              <Users size={11} /> {spk}
-                            </span>
-                          ))}
+                          <span className="meeting-tag highlight">
+                            <Users size={11} /> Team Meeting
+                          </span>
                           <span className="meeting-tag">
                             <ListTodo size={11} /> {m.task_count} tasks
+                          </span>
+                          <span className="meeting-tag">
+                            <Clock size={11} /> {Math.floor(m.duration_seconds / 60)}m {m.duration_seconds % 60}s
                           </span>
                         </div>
 
@@ -2152,8 +2140,8 @@ export default function App() {
 
                     <div className="settings-toggle-row">
                       <div>
-                        <b>Multi-Voice Conference Capture (Max Room Voices)</b>
-                        <small>Disables aggressive browser acoustic echo suppression to capture all voices in the room.</small>
+                        <b>Omnidirectional Room Microphone (High Sensitivity)</b>
+                        <small>Disables aggressive noise gating so everyone speaking in the room is smoothly captured into meeting notes.</small>
                       </div>
                       <input
                         type="checkbox"
@@ -2231,10 +2219,10 @@ export default function App() {
 
                   <div className="privacy-clause-card">
                     <h4>
-                      <Users size={16} color="var(--primary)" /> Multi-Speaker Audio Governance
+                      <Users size={16} color="var(--primary)" /> Meeting Audio & Voice Governance
                     </h4>
                     <p>
-                      Voice recordings and conference diarizations remain strictly within your session. Audio streams are captured via secure in-browser Web Audio APIs and transmitted only over TLS 1.3 encrypted sockets.
+                      Voice recordings and meeting audio remain strictly within your session. Audio streams are captured via secure in-browser Web Audio APIs and transmitted only over TLS 1.3 encrypted connections.
                     </p>
                   </div>
 
@@ -2360,56 +2348,35 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Multi-Speaker Conference Diarization & Language Bar */}
-              <div style={{ margin: "14px 0 8px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 5 }}>
-                    <Volume2 size={13} color="var(--primary)" /> MULTI-VOICE CONFERENCE (MAX ROOM VOICES)
+              {/* Meeting Session Status & Language Control */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "14px 0 12px", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="live-meeting-badge">
+                    <span className="live-meeting-dot" /> LIVE MEETING
                   </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Accent:</span>
-                    <select
-                      value={voiceLang}
-                      onChange={(e) => handleLanguageChange(e.target.value)}
-                      style={{
-                        background: "var(--bg-hover)",
-                        border: "1px solid var(--border-card)",
-                        color: "var(--text-primary)",
-                        borderRadius: "6px",
-                        padding: "3px 8px",
-                        fontSize: "11px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <option value="en-IN">🇮🇳 English (India / Hinglish)</option>
-                      <option value="en-US">🇺🇸 English (US)</option>
-                      <option value="hi-IN">🇮🇳 Hindi (हिन्दी)</option>
-                      <option value="en-GB">🇬🇧 English (UK)</option>
-                    </select>
-                  </div>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Omnidirectional Room Mic Active</span>
                 </div>
 
-                <div className="speaker-selector-bar">
-                  <span style={{ fontSize: 11, color: "var(--text-muted)", marginRight: 4 }}>Active Voice:</span>
-                  {availableSpeakers.map((spk) => (
-                    <button
-                      key={spk}
-                      type="button"
-                      className={"speaker-pill-btn " + (activeSpeaker === spk ? "active" : "")}
-                      onClick={() => handleSelectSpeaker(spk)}
-                    >
-                      <span className="speaker-dot" />
-                      {spk}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    className="speaker-pill-btn"
-                    onClick={handleAddSpeaker}
-                    title="Add another speaker in room"
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Language / Accent:</span>
+                  <select
+                    value={voiceLang}
+                    onChange={(e) => handleLanguageChange(e.target.value)}
+                    style={{
+                      background: "var(--bg-hover)",
+                      border: "1px solid var(--border-card)",
+                      color: "var(--text-primary)",
+                      borderRadius: "6px",
+                      padding: "4px 8px",
+                      fontSize: "11px",
+                      cursor: "pointer",
+                    }}
                   >
-                    <Plus size={11} /> Add Speaker
-                  </button>
+                    <option value="en-IN">🇮🇳 English (India / Hinglish)</option>
+                    <option value="en-US">🇺🇸 English (US)</option>
+                    <option value="hi-IN">🇮🇳 Hindi (हिन्दी)</option>
+                    <option value="en-GB">🇬🇧 English (UK)</option>
+                  </select>
                 </div>
               </div>
 
@@ -2451,42 +2418,16 @@ export default function App() {
                 </div>
               )}
 
-              {/* Live Canvas */}
+              {/* Live Meeting Transcript Canvas */}
               <div className="voice-transcript-canvas">
-                {speakerTurns.length > 0 ? (
-                  <div className="multi-speaker-turns-list">
-                    {speakerTurns.map((turn, idx) => (
-                      <div className="speaker-turn-card" key={turn.id || idx}>
-                        <div className={"speaker-turn-avatar spk-" + (idx % 4)}>
-                          {turn.speaker.charAt(0) || "S"}
-                        </div>
-                        <div className="speaker-turn-content">
-                          <b>
-                            {turn.speaker} <span style={{ opacity: 0.6, fontWeight: 400 }}>• {turn.timestamp}</span>
-                          </b>
-                          <p>{turn.text}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {liveInterimText && isRecording && (
-                      <div className="speaker-turn-card" style={{ opacity: 0.9, borderStyle: "dashed", borderColor: "var(--primary)" }}>
-                        <div className="speaker-turn-avatar spk-0">{activeSpeaker.charAt(0)}</div>
-                        <div className="speaker-turn-content">
-                          <b>{activeSpeaker} (speaking...)</b>
-                          <p>
-                            {liveInterimText}
-                            <span className="voice-pulse-cursor" />
-                          </p>
-                        </div>
-                      </div>
+                {voiceTranscript || liveInterimText ? (
+                  <div style={{ fontSize: 13, lineHeight: 1.75, color: "var(--text-primary)", whiteSpace: "pre-wrap" }}>
+                    <span>{voiceTranscript}</span>
+                    {liveInterimText && (
+                      <span style={{ color: "var(--primary)", fontWeight: 500 }}>
+                        {voiceTranscript ? " " : ""}{liveInterimText}
+                      </span>
                     )}
-                  </div>
-                ) : voiceTranscript || liveInterimText ? (
-                  <div>
-                    <div style={{ marginBottom: 6, fontSize: 11, fontWeight: 600, color: "var(--primary)" }}>
-                      Current Speaker: {activeSpeaker}
-                    </div>
-                    <span>{voiceTranscript || liveInterimText}</span>
                     {isRecording && <span className="voice-pulse-cursor" />}
                   </div>
                 ) : (
@@ -2494,7 +2435,7 @@ export default function App() {
                     <p>
                       🎙️ <b>Start speaking naturally into your microphone...</b>
                       <br />
-                      Mention action items, deadlines, assignees, or project requirements.
+                      The microphone captures everyone speaking in the room and live-transcribes into meeting notes.
                     </p>
                     <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                       Quick pitch samples (click to test immediately):
@@ -2637,14 +2578,12 @@ export default function App() {
 
             <div style={{ padding: "16px 20px" }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-                {(activeMeetingModal.speakers && activeMeetingModal.speakers.length > 0
-                  ? activeMeetingModal.speakers
-                  : ["Lead"]
-                ).map((s, i) => (
-                  <span className="meeting-tag highlight" key={i}>
-                    <Users size={11} /> {s}
-                  </span>
-                ))}
+                <span className="meeting-tag highlight">
+                  <Users size={11} /> Team Meeting Notes
+                </span>
+                <span className="meeting-tag">
+                  <Clock size={11} /> Duration: {Math.floor(activeMeetingModal.duration_seconds / 60)}m {activeMeetingModal.duration_seconds % 60}s
+                </span>
               </div>
 
               <div
