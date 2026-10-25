@@ -121,9 +121,11 @@ def startup():
 
 @app.get("/api/health")
 def health():
+    db_status = db.check_db_health()
     return {
-        "status": "ok",
+        "status": "ok" if db_status.get("ok") else "degraded",
         "service": "ActionPilot API",
+        "database": db_status,
         "auth_enabled": True,
         "email_verification": bool(os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")),
         "llm_mode": os.getenv("ACTIONPILOT_LLM_MODE", "local")

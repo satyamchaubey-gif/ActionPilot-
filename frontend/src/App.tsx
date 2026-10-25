@@ -43,6 +43,25 @@ import {
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "";
 
+function formatApiError(err: any): string {
+  const msg = err?.message || String(err || "");
+  if (msg === "Failed to fetch") {
+    return "Cannot connect to backend server. If using Render free tier, the server may be waking up from sleep (~50s delay). Please wait 30 seconds and try again.";
+  }
+  if (msg.includes("Unexpected token '<'") || msg.includes("is not valid JSON")) {
+    return "Backend connection error: Received HTML instead of JSON. Ensure 'VITE_API_BASE_URL' in Vercel is set to your Render backend URL (e.g. https://your-app.onrender.com).";
+  }
+  return msg || "An unexpected error occurred.";
+}
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  if (hour >= 17 && hour < 23) return "Good evening";
+  return "Welcome back";
+}
+
 type User = {
   id: string;
   email: string;
@@ -203,8 +222,8 @@ export default function App() {
     let r: Response;
     try {
       r = await fetch(API + path, { ...init, headers });
-    } catch {
-      throw Error("Cannot connect to backend server. Make sure FastAPI is running on http://127.0.0.1:8000.");
+    } catch (e: any) {
+      throw Error(formatApiError(e));
     }
     if (r.status === 401) {
       setToken(null);
@@ -220,7 +239,11 @@ export default function App() {
       } catch {}
       throw Error(m);
     }
-    return r.json();
+    try {
+      return await r.json();
+    } catch (e: any) {
+      throw Error(formatApiError(e));
+    }
   }
 
   // Validate existing token on load
@@ -621,11 +644,7 @@ export default function App() {
         notify(`Welcome back, ${data.user.full_name || data.user.email}!`);
       }
     } catch (err: any) {
-      const msg =
-        err.message === "Failed to fetch"
-          ? "Cannot connect to backend server. Make sure FastAPI is running on http://127.0.0.1:8000."
-          : err.message;
-      setAuthError(msg);
+      setAuthError(formatApiError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -661,11 +680,7 @@ export default function App() {
       setDevCode(data.dev_code || null);
       setAuthNotice(data.message || "Verification code sent to your email.");
     } catch (err: any) {
-      const msg =
-        err.message === "Failed to fetch"
-          ? "Cannot connect to backend server. Make sure FastAPI is running on http://127.0.0.1:8000."
-          : err.message;
-      setAuthError(msg);
+      setAuthError(formatApiError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -693,11 +708,7 @@ export default function App() {
       setCurrentUser(data.user);
       notify("Email verified successfully! Workspace ready.");
     } catch (err: any) {
-      const msg =
-        err.message === "Failed to fetch"
-          ? "Cannot connect to backend server. Make sure FastAPI is running on http://127.0.0.1:8000."
-          : err.message;
-      setAuthError(msg);
+      setAuthError(formatApiError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -719,11 +730,7 @@ export default function App() {
       setAuthNotice(data.message || "A new code has been sent.");
       notify("New code sent!");
     } catch (err: any) {
-      const msg =
-        err.message === "Failed to fetch"
-          ? "Cannot connect to backend server. Make sure FastAPI is running on http://127.0.0.1:8000."
-          : err.message;
-      setAuthError(msg);
+      setAuthError(formatApiError(err));
     } finally {
       setAuthLoading(false);
     }
@@ -1361,7 +1368,7 @@ export default function App() {
                   <div className="eyebrow">
                     <Sparkles size={13} /> EVIDENCE-DRIVEN WORKFLOW INTELLIGENCE
                   </div>
-                  <h1>Good morning, {currentUser.full_name || currentUser.email.split("@")[0]}.</h1>
+                  <h1>{getGreeting()}, {currentUser.full_name || currentUser.email.split("@")[0]}.</h1>
                   <p>Transform unstructured voice notes, emails & documents into verified, human-governed work.</p>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
