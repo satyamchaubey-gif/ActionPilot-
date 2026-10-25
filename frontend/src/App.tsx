@@ -1074,40 +1074,55 @@ export default function App() {
               <button
                 className="demo-preset-btn"
                 onClick={() => setShowDemoMenu(!showDemoMenu)}
-                title="Load Realistic Scenarios for Hackathon Presentation"
+                title="Load Realistic Scenarios"
               >
-                <Zap size={13} /> Load Demo Scenario ▾
+                <Zap size={13} /> Sample Scenarios ▾
               </button>
               {showDemoMenu && (
                 <div className="demo-dropdown">
                   <button
                     className="demo-item"
-                    onClick={() => handleLoadDemo("product_launch")}
+                    onClick={() => {
+                      handleLoadDemo("product_launch");
+                      setShowDemoMenu(false);
+                    }}
                   >
-                    <span style={{ fontSize: 16 }}>🎯</span>
+                    <div className="pipeicon p0" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                      <Workflow size={14} />
+                    </div>
                     <div>
                       <b>Product Launch Sync</b>
-                      <small>Priya deadline conflict (Nov 2 vs Nov 6)</small>
+                      <small>Deadline conflict resolution (Nov 2 vs Nov 6)</small>
                     </div>
                   </button>
                   <button
                     className="demo-item"
-                    onClick={() => handleLoadDemo("security_incident")}
+                    onClick={() => {
+                      handleLoadDemo("security_incident");
+                      setShowDemoMenu(false);
+                    }}
                   >
-                    <span style={{ fontSize: 16 }}>🚨</span>
+                    <div className="pipeicon p2" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                      <AlertTriangle size={14} />
+                    </div>
                     <div>
                       <b>Security Incident Response</b>
-                      <small>API credential leak with missing assignees</small>
+                      <small>API credential leak triage & unassigned owners</small>
                     </div>
                   </button>
                   <button
                     className="demo-item"
-                    onClick={() => handleLoadDemo("exec_offsite")}
+                    onClick={() => {
+                      handleLoadDemo("exec_offsite");
+                      setShowDemoMenu(false);
+                    }}
                   >
-                    <span style={{ fontSize: 16 }}>💼</span>
+                    <div className="pipeicon p3" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                      <FileText size={14} />
+                    </div>
                     <div>
                       <b>Executive Strategy Offsite</b>
-                      <small>Budget approval & vendor RFP deadlines</small>
+                      <small>Budget signoffs & vendor RFP milestones</small>
                     </div>
                   </button>
                 </div>
@@ -1491,8 +1506,8 @@ export default function App() {
               }}
             >
               <div>
-                <b style={{ color: "#f8fafc", fontSize: 12 }}>🎙️ Voice Meeting Note</b>
-                <p style={{ color: "#94a3b8", fontSize: 11, margin: "3px 0 0" }}>
+                <b style={{ color: "#f8fafc", fontSize: 13, fontWeight: 600 }}>🎙️ Voice Meeting Note</b>
+                <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>
                   Record a voice memo directly in your browser
                 </p>
               </div>
@@ -1509,7 +1524,7 @@ export default function App() {
 
             {voiceTranscript && (
               <div className="voice-transcript-card">
-                <span style={{ fontSize: 10, color: "#60a5fa", fontWeight: 700, display: "block", marginBottom: 4 }}>
+                <span style={{ fontSize: 11, color: "#60a5fa", fontWeight: 700, display: "block", marginBottom: 4, letterSpacing: "0.04em" }}>
                   ● LIVE TRANSCRIPT:
                 </span>
                 {voiceTranscript}
@@ -1761,7 +1776,6 @@ export default function App() {
               {selected.status === "approved" && (
                 <button
                   className="primary full"
-                  style={{ background: "linear-gradient(135deg,#6366f1,#4f46e5)" }}
                   onClick={() => openDispatchModal(selected)}
                 >
                   <Zap size={15} /> Dispatch Action (Calendar / Slack / GitHub)
@@ -1831,7 +1845,7 @@ export default function App() {
                 <div className="eyebrow" style={{ color: "#ef4444" }}>
                   <AlertTriangle size={13} /> CONFLICT DETECTED
                 </div>
-                <h2>AI Conflict Resolution</h2>
+                <h2>Discrepancy Resolution</h2>
                 <p>Task: "{conflictModalTask.title}"</p>
               </div>
               <button className="iconbtn" onClick={() => setConflictModalTask(null)}>
@@ -1839,8 +1853,8 @@ export default function App() {
               </button>
             </div>
 
-            <div style={{ background: "#2e1014", border: "1px solid #7f1d1d", borderRadius: 10, padding: 14 }}>
-              <p style={{ color: "#fca5a5", fontSize: 12, margin: "0 0 12px" }}>
+            <div className="conflict-resolver-box">
+              <p>
                 Two contradictory deadlines were extracted for this action item:
               </p>
               <div className="conflict-dates-row">
@@ -1848,13 +1862,13 @@ export default function App() {
                   <span>Initial Meeting Note:</span>
                   <b>{dateLabel(conflictModalTask.due_date)}</b>
                 </div>
-                <div className="conflict-date-badge" style={{ borderColor: "#ef4444" }}>
+                <div className="conflict-date-badge" style={{ borderColor: "rgba(239, 68, 68, 0.5)", background: "rgba(239, 68, 68, 0.1)" }}>
                   <span>Client Confirmation:</span>
-                  <b>Nov 6, 2026 (Later Date)</b>
+                  <b>Nov 6, 2026 (Superseding)</b>
                 </div>
               </div>
-              <p style={{ fontSize: 11, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>
-                💡 <b>AI Recommendation:</b> In business workflows, client confirmations supersede earlier internal drafts. Recommend adopting <b>2026-11-06</b>.
+              <p style={{ fontSize: 12, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>
+                💡 <b>Resolution Note:</b> Client confirmations supersede earlier internal drafts. Recommend adopting <b>2026-11-06</b>.
               </p>
             </div>
 
@@ -1997,7 +2011,7 @@ export default function App() {
                   value={dispatchTarget}
                   onChange={(e) => setDispatchTarget(e.target.value)}
                 />
-                <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>
+                <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
                   Leave empty to execute a simulated dry-run delivery.
                 </p>
               </div>
@@ -2169,8 +2183,8 @@ function TaskCard({
         <div
           className="taskflag"
           style={{
-            background: "#450a0a",
-            borderColor: "#991b1b",
+            background: "rgba(239, 68, 68, 0.08)",
+            borderColor: "rgba(239, 68, 68, 0.3)",
             color: "#fca5a5",
           }}
         >
@@ -2181,12 +2195,12 @@ function TaskCard({
             style={{
               background: "#ef4444",
               color: "#fff",
-              padding: "4px 8px",
-              borderRadius: 5,
-              fontWeight: 700,
+              padding: "4px 9px",
+              borderRadius: 6,
+              fontWeight: 600,
             }}
           >
-            ⚡ Resolve with AI
+            Resolve Conflict
           </button>
         </div>
       )}
@@ -2237,13 +2251,12 @@ function TaskCard({
               <button
                 className="primary"
                 style={{
-                  padding: "6px 10px",
-                  fontSize: 10,
-                  background: "linear-gradient(135deg,#6366f1,#4f46e5)",
+                  padding: "6px 12px",
+                  fontSize: 12,
                 }}
                 onClick={onDispatch}
               >
-                <Zap size={12} /> Dispatch Action
+                <Zap size={13} /> Dispatch Action
               </button>
             </>
           )}
