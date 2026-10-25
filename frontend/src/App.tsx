@@ -48,6 +48,7 @@ import {
   Copy,
   Trash2,
   Volume2,
+  Monitor,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -228,6 +229,13 @@ export default function App() {
   const [micStatus, setMicStatus] = useState<"idle" | "listening" | "denied" | "unsupported">("idle");
   const voiceLangRef = useRef("en-IN");
   const restartTimerRef = useRef<any>(null);
+
+  // Google Meet & Remote Audio Capture Integration
+  const [audioSourceType, setAudioSourceType] = useState<"mic" | "tab">("mic");
+  const [showMeetImportModal, setShowMeetImportModal] = useState(false);
+  const [meetPastedText, setMeetPastedText] = useState("");
+  const silentOscillatorRef = useRef<any>(null);
+  const displayStreamRef = useRef<any>(null);
 
   // Feature 2: 1-Click Demo Presets
   const [showDemoMenu, setShowDemoMenu] = useState(false);
@@ -554,6 +562,18 @@ export default function App() {
           analyser.fftSize = 64;
           src.connect(analyser);
           analyserRef.current = analyser;
+
+          // Active Audio Session Keep-Alive: prevents Chrome from throttling when switching to Google Meet
+          try {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            gain.gain.value = 0.00001; // Inaudible
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            silentOscillatorRef.current = osc;
+          } catch {}
+
           const data = new Uint8Array(analyser.frequencyBinCount);
           const pollAudio = () => {
             if (!isExplicitlyRecordingRef.current) return;
@@ -711,6 +731,14 @@ export default function App() {
     if (mediaStreamRef.current) {
       try { mediaStreamRef.current.getTracks().forEach((track: any) => track.stop()); } catch {}
     }
+    if (displayStreamRef.current) {
+      try { displayStreamRef.current.getTracks().forEach((track: any) => track.stop()); } catch {}
+      displayStreamRef.current = null;
+    }
+    if (silentOscillatorRef.current) {
+      try { silentOscillatorRef.current.stop(); } catch {}
+      silentOscillatorRef.current = null;
+    }
     if (audioContextRef.current) {
       try { audioContextRef.current.close(); } catch {}
     }
@@ -718,6 +746,7 @@ export default function App() {
       cancelAnimationFrame(animFrameRef.current);
     }
     setAudioLevel(0);
+    setAudioSourceType("mic");
 
     const captured = (transcriptRef.current || voiceTranscript).trim();
     if (captured) {
@@ -789,6 +818,68 @@ export default function App() {
     setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
     setUploadText(text);
     notify("Loaded meeting scenario into Voice Studio!");
+  }
+
+  // Google Meet Tab Audio Capture (Direct digital stream without acoustic echo cancellation)
+  async function captureGoogleMeetTabAudio() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      notify("Tab audio capture is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+    try {
+      notify("Select your Google Meet tab and ensure 'Share tab audio' is checked.");
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        },
+      });
+
+      const audioTracks = displayStream.getAudioTracks();
+      if (!audioTracks || audioTracks.length === 0) {
+        notify("⚠️ No audio track found from tab. Make sure 'Also share tab audio' was checked.");
+        displayStream.getTracks().forEach((t: any) => t.stop());
+        return;
+      }
+
+      displayStreamRef.current = displayStream;
+      setAudioSourceType("tab");
+
+      if (audioContextRef.current) {
+        const src = audioContextRef.current.createMediaStreamSource(displayStream);
+        const gain = audioContextRef.current.createGain();
+        gain.gain.value = 2.5; // Boost meeting participants audio
+        src.connect(gain);
+        if (analyserRef.current) gain.connect(analyserRef.current);
+      }
+
+      audioTracks[0].onended = () => {
+        setAudioSourceType("mic");
+        notify("Google Meet tab audio sharing stopped. Reverted to room microphone.");
+      };
+
+      notify("Connected to Google Meet Tab Audio! Recording live meeting.");
+    } catch (err: any) {
+      if (err.name !== "NotAllowedError") {
+        console.warn("Display media warning:", err);
+      }
+    }
+  }
+
+  // Google Meet Live Captions (CC) / Meeting Transcript Import
+  function handleImportMeetCaptions() {
+    if (!meetPastedText.trim()) return;
+    const clean = meetPastedText.trim();
+    accumulatedTranscriptRef.current = (accumulatedTranscriptRef.current ? accumulatedTranscriptRef.current + "\n" + clean : clean).trim();
+    transcriptRef.current = accumulatedTranscriptRef.current;
+    setVoiceTranscript(accumulatedTranscriptRef.current);
+    setVoiceWordsCount(accumulatedTranscriptRef.current.split(/\s+/).filter(Boolean).length);
+    setUploadText(accumulatedTranscriptRef.current);
+    setMeetPastedText("");
+    setShowMeetImportModal(false);
+    notify("Google Meet transcript merged into live meeting notes!");
   }
 
   // Feature 2: 1-Click Demo Preset Loader
@@ -1579,10 +1670,10 @@ export default function App() {
               <div className="heading">
                 <div>
                   <div className="eyebrow">
-                    <Sparkles size={13} /> EVIDENCE-DRIVEN WORKFLOW INTELLIGENCE
+                    <Sparkles size={13} /> WORKSPACE INTELLIGENCE
                   </div>
                   <h1>{getGreeting()}, {currentUser.full_name || currentUser.email.split("@")[0]}.</h1>
-                  <p>Transform unstructured voice notes, emails & documents into verified, human-governed work.</p>
+                  <p>Transform your live meeting recordings, voice memos, and source documents into actionable tasks.</p>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="secondary" onClick={startVoiceRecording}>
@@ -1592,19 +1683,6 @@ export default function App() {
                     <Plus size={16} /> New workflow
                   </button>
                 </div>
-              </div>
-
-              <div className="trustbanner">
-                <div className="trusticon">
-                  <ShieldCheck size={22} />
-                </div>
-                <div>
-                  <b>Evidence-Backed Automation & Human Governance</b>
-                  <p>
-                    Every proposal is anchored to source document citations with confidence scoring. Actions remain gated until explicitly approved by a human operator.
-                  </p>
-                </div>
-                <span>● APPROVAL GATE ACTIVE</span>
               </div>
 
               <div className="sectionhead">
@@ -2348,35 +2426,59 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Meeting Session Status & Language Control */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "14px 0 12px", flexWrap: "wrap", gap: 8 }}>
+              {/* Meeting Session Status, Google Meet Tools & Language Control */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "14px 0 12px", flexWrap: "wrap", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="live-meeting-badge">
                     <span className="live-meeting-dot" /> LIVE MEETING
                   </span>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Omnidirectional Room Mic Active</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    Source: {audioSourceType === "tab" ? "💻 Google Meet Tab Audio" : "🎙️ Room Microphone"}
+                  </span>
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Language / Accent:</span>
-                  <select
-                    value={voiceLang}
-                    onChange={(e) => handleLanguageChange(e.target.value)}
-                    style={{
-                      background: "var(--bg-hover)",
-                      border: "1px solid var(--border-card)",
-                      color: "var(--text-primary)",
-                      borderRadius: "6px",
-                      padding: "4px 8px",
-                      fontSize: "11px",
-                      cursor: "pointer",
-                    }}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ fontSize: 11, padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 5 }}
+                    onClick={captureGoogleMeetTabAudio}
+                    title="Capture digital audio directly from your Google Meet tab (works even with headphones)"
                   >
-                    <option value="en-IN">🇮🇳 English (India / Hinglish)</option>
-                    <option value="en-US">🇺🇸 English (US)</option>
-                    <option value="hi-IN">🇮🇳 Hindi (हिन्दी)</option>
-                    <option value="en-GB">🇬🇧 English (UK)</option>
-                  </select>
+                    <Monitor size={12} /> Google Meet Audio
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ fontSize: 11, padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 5 }}
+                    onClick={() => setShowMeetImportModal(true)}
+                    title="Paste Google Meet live closed captions (CC) or notes directly"
+                  >
+                    <FileText size={12} /> Paste Meet CC
+                  </button>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Accent:</span>
+                    <select
+                      value={voiceLang}
+                      onChange={(e) => handleLanguageChange(e.target.value)}
+                      style={{
+                        background: "var(--bg-hover)",
+                        border: "1px solid var(--border-card)",
+                        color: "var(--text-primary)",
+                        borderRadius: "6px",
+                        padding: "4px 8px",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="en-IN">🇮🇳 English (India / Hinglish)</option>
+                      <option value="en-US">🇺🇸 English (US)</option>
+                      <option value="hi-IN">🇮🇳 Hindi (हिन्दी)</option>
+                      <option value="en-GB">🇬🇧 English (UK)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -2548,6 +2650,66 @@ export default function App() {
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Import Google Meet Captions / Transcript Modal */}
+      {showMeetImportModal && (
+        <div
+          className="modal-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowMeetImportModal(false);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 620 }}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16 }}>Import Google Meet Captions / Notes</h3>
+                <small style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                  Paste live closed captions (CC), chat action items, or meeting transcript
+                </small>
+              </div>
+              <button className="iconbtn" onClick={() => setShowMeetImportModal(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: "16px 20px" }}>
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 0 }}>
+                💡 <b>How to get live text from Google Meet:</b> In Google Meet, click <b>Turn on captions (CC)</b> at the bottom. Copy any live text or participant statements, paste here, and it will seamlessly merge into your meeting notes!
+              </p>
+              <textarea
+                value={meetPastedText}
+                onChange={(e) => setMeetPastedText(e.target.value)}
+                placeholder="Paste Google Meet text or live CC here (e.g. 'Priya: Let's review the deployment on Friday...')"
+                rows={7}
+                style={{
+                  width: "100%",
+                  background: "var(--bg-subtle)",
+                  border: "1px solid var(--border-card)",
+                  borderRadius: "var(--radius-md)",
+                  padding: 12,
+                  fontSize: 12.5,
+                  color: "var(--text-primary)",
+                  boxSizing: "border-box",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+
+            <div className="modal-actions" style={{ justifyContent: "flex-end", gap: 10 }}>
+              <button className="btn" onClick={() => setShowMeetImportModal(false)}>
+                Cancel
+              </button>
+              <button
+                className="primary"
+                onClick={handleImportMeetCaptions}
+                disabled={!meetPastedText.trim()}
+              >
+                Merge into Meeting Notes
+              </button>
             </div>
           </div>
         </div>
