@@ -36,6 +36,8 @@ import {
   Zap,
   CheckCircle2,
   Radio,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -96,6 +98,22 @@ function Badge({ children, tone = "" }: { children: any; tone?: string }) {
 }
 
 export default function App() {
+  // Theme State (Dark / Light)
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const saved = localStorage.getItem("actionpilot_theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("actionpilot_theme", theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }
+
   // Authentication State
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("actionpilot_token"));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -699,6 +717,15 @@ export default function App() {
   if (!currentUser || !token) {
     return (
       <div className="auth-overlay">
+        <button
+          className="iconbtn"
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          aria-label="Toggle theme"
+          style={{ position: "fixed", top: 20, right: 24, zIndex: 100 }}
+        >
+          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <div className="auth-card">
           <div className="auth-brand">
             <div className="brandmark">
@@ -1135,6 +1162,14 @@ export default function App() {
             <span className="env">
               <i /> LOCAL ENVIRONMENT
             </span>
+            <button
+              className="iconbtn"
+              onClick={toggleTheme}
+              title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              aria-label="Toggle color theme"
+            >
+              {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
             <button className="iconbtn" onClick={refresh} title="Refresh">
               <RefreshCw size={16} />
             </button>
