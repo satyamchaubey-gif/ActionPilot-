@@ -222,6 +222,13 @@ export default function App() {
   const mediaStreamRef = useRef<any>(null);
   const animFrameRef = useRef<any>(null);
 
+  // Live Speech Recognition & Accent Adaptation
+  const [liveInterimText, setLiveInterimText] = useState("");
+  const [voiceLang, setVoiceLang] = useState("en-IN");
+  const [micStatus, setMicStatus] = useState<"idle" | "listening" | "denied" | "unsupported">("idle");
+  const voiceLangRef = useRef("en-IN");
+  const restartTimerRef = useRef<any>(null);
+
   // Feature 2: 1-Click Demo Presets
   const [showDemoMenu, setShowDemoMenu] = useState(false);
 
@@ -482,62 +489,95 @@ export default function App() {
     }
   }
 
+  function handleLanguageChange(newLang: string) {
+    setVoiceLang(newLang);
+    voiceLangRef.current = newLang;
+    if (isRecording && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+        notify(`Switched speech model to: ${newLang === "en-IN" ? "English (India)" : newLang === "hi-IN" ? "Hindi" : newLang}`);
+      } catch {}
+    }
+  }
+
   function startVoiceRecording() {
     setVoiceStudioOpen(true);
     isExplicitlyRecordingRef.current = true;
     accumulatedTranscriptRef.current = "";
     transcriptRef.current = "";
     setVoiceTranscript("");
+    setLiveInterimText("");
     setVoiceWordsCount(0);
     setRecordingSeconds(0);
     setIsRecording(true);
+    setMicStatus("listening");
 
-    // 1. Omnidirectional High-Sensitivity Conference Audio Capture
-    // Disabling aggressive noise cancellation so room voices aren't filtered as background noise
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices
-        .getUserMedia({
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: true,
-            channelCount: 2,
-          },
-        })
-        .then((stream) => {
-          mediaStreamRef.current = stream;
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            const ctx = new AudioContextClass();
-            audioContextRef.current = ctx;
-            const src = ctx.createMediaStreamSource(stream);
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 64;
-            src.connect(analyser);
-            analyserRef.current = analyser;
-            const data = new Uint8Array(analyser.frequencyBinCount);
-            const pollAudio = () => {
-              if (!isExplicitlyRecordingRef.current) return;
-              analyser.getByteFrequencyData(data);
-              let sum = 0;
-              for (let i = 0; i < data.length; i++) sum += data[i];
-              const level = Math.min(100, Math.round((sum / data.length) * 1.8));
-              setAudioLevel(level);
-              animFrameRef.current = requestAnimationFrame(pollAudio);
-            };
-            pollAudio();
-          }
-        })
-        .catch((err) => {
-          console.warn("Audio meter init warning:", err);
-        });
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
     }
 
-    // 2. Start Continuous Keep-Alive Speech Recognition with Speaker Tracking
+    // 1. Omnidirectional High-Sensitivity Conference Audio Capture & Decibel Meter
+    async function initAudioMeter() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            autoGainControl: true,
+          },
+        });
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e: any) {
+          console.warn("Could not access microphone for audio meter:", e);
+          setMicStatus("denied");
+          return;
+        }
+      }
+
+      mediaStreamRef.current = stream;
+      setMicStatus("listening");
+
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass();
+          audioContextRef.current = ctx;
+          if (ctx.state === "suspended") {
+            await ctx.resume();
+          }
+          const src = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 64;
+          src.connect(analyser);
+          analyserRef.current = analyser;
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          const pollAudio = () => {
+            if (!isExplicitlyRecordingRef.current) return;
+            analyser.getByteFrequencyData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) sum += data[i];
+            const level = Math.min(100, Math.round((sum / data.length) * 2.2));
+            setAudioLevel(level);
+            animFrameRef.current = requestAnimationFrame(pollAudio);
+          };
+          pollAudio();
+        }
+      } catch (err) {
+        console.warn("AudioContext setup warning:", err);
+      }
+    }
+    initAudioMeter();
+
+    // 2. Start Continuous Keep-Alive Speech Recognition with Speaker Tracking & Accent Support
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      notify("Web Speech API not detected in this browser — Voice Studio loaded in interactive demo mode!");
+      setMicStatus("unsupported");
+      notify("Web Speech API not detected in this browser — Voice Studio loaded in interactive mode!");
       return;
     }
 
@@ -545,23 +585,23 @@ export default function App() {
       const rec = new SpeechRecognition();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = "en-US";
+      rec.lang = voiceLangRef.current || "en-IN";
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        setMicStatus("listening");
+      };
 
       rec.onresult = (event: any) => {
-        let currentSessionText = "";
-        for (let i = 0; i < event.results.length; ++i) {
-          currentSessionText += event.results[i][0].transcript + " ";
-        }
-        const full = (accumulatedTranscriptRef.current + " " + currentSessionText).trim();
-        transcriptRef.current = full;
-        setVoiceTranscript(full);
-        setVoiceWordsCount(full.split(/\s+/).filter(Boolean).length);
-        setUploadText(full);
+        let interimText = "";
+        let newFinalText = "";
 
-        // Record finalized phrases under active speaker
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            const phrase = event.results[i][0].transcript.trim();
+          const res = event.results[i];
+          const transcript = res[0].transcript;
+          if (res.isFinal) {
+            newFinalText += transcript + " ";
+            const phrase = transcript.trim();
             if (phrase) {
               const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
               setSpeakerTurns((prev) => [
@@ -574,35 +614,63 @@ export default function App() {
                 },
               ]);
             }
+          } else {
+            interimText += transcript;
           }
         }
+
+        setLiveInterimText(interimText);
+
+        if (newFinalText) {
+          accumulatedTranscriptRef.current = (accumulatedTranscriptRef.current + " " + newFinalText).trim();
+        }
+
+        const combined = (accumulatedTranscriptRef.current + (interimText ? " " + interimText : "")).trim();
+        transcriptRef.current = combined;
+        setVoiceTranscript(combined);
+        setVoiceWordsCount(combined.split(/\s+/).filter(Boolean).length);
+        setUploadText(combined);
       };
 
       rec.onerror = (e: any) => {
-        console.warn("Speech recognition warning:", e.error);
+        console.warn("Speech recognition event error:", e.error);
+        if (e.error === "no-speech") {
+          // Normal silence timeout, let onend handle clean restart
+          return;
+        }
         if (e.error === "not-allowed" || e.error === "service-not-allowed") {
           isExplicitlyRecordingRef.current = false;
           setIsRecording(false);
-          notify("Microphone permission denied. Please allow microphone in browser settings.");
+          setMicStatus("denied");
+          notify("Microphone permission denied. Please allow microphone in browser address bar.");
+          return;
+        }
+        if (e.error === "network") {
+          notify("Speech recognition connection warning. Please check internet connection.");
+          return;
         }
       };
 
       rec.onend = () => {
-        // Continuous Keep-Alive: If user hasn't clicked stop, auto-restart seamlessly!
+        setLiveInterimText("");
         if (isExplicitlyRecordingRef.current) {
-          accumulatedTranscriptRef.current = transcriptRef.current;
-          try {
-            const nextRec = createRecognizer();
-            if (nextRec) {
-              recognitionRef.current = nextRec;
-              setRecognitionInstance(nextRec);
-              nextRec.start();
+          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = setTimeout(() => {
+            if (!isExplicitlyRecordingRef.current) return;
+            try {
+              const nextRec = createRecognizer();
+              if (nextRec) {
+                recognitionRef.current = nextRec;
+                setRecognitionInstance(nextRec);
+                nextRec.start();
+              }
+            } catch (err) {
+              console.warn("Safe restart warning:", err);
             }
-          } catch (err) {
-            console.warn("Keep-alive auto-restart failed:", err);
-          }
+          }, 200);
         } else {
           setIsRecording(false);
+          setMicStatus("idle");
         }
       };
 
@@ -618,7 +686,7 @@ export default function App() {
         recognitionRef.current = recognizer;
         setRecognitionInstance(recognizer);
         recognizer.start();
-        notify("🎙️ Voice Studio is listening in Multi-Voice Room Mode... Speak naturally.");
+        notify("🎙️ Voice Studio is listening! Speak in English, Hindi, or Hinglish.");
       }
     } catch (err: any) {
       console.warn("Recognizer start failed:", err);
@@ -629,6 +697,13 @@ export default function App() {
   function stopVoiceRecording(autoExtract: boolean = false) {
     isExplicitlyRecordingRef.current = false;
     setIsRecording(false);
+    setLiveInterimText("");
+    setMicStatus("idle");
+
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
 
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch {}
@@ -720,8 +795,10 @@ export default function App() {
         { id: "t2", speaker: "Speaker 2 (Sarah)", text: "Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.", timestamp: "02:30:35 PM" },
       ]);
     }
+    accumulatedTranscriptRef.current = text;
     transcriptRef.current = text;
     setVoiceTranscript(text);
+    setLiveInterimText("");
     setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
     setUploadText(text);
     notify("Loaded pitch scenario into Multi-Speaker Voice Studio!");
@@ -2283,13 +2360,33 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Multi-Speaker Conference Diarization Bar */}
+              {/* Multi-Speaker Conference Diarization & Language Bar */}
               <div style={{ margin: "14px 0 8px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 5 }}>
                     <Volume2 size={13} color="var(--primary)" /> MULTI-VOICE CONFERENCE (MAX ROOM VOICES)
                   </span>
-                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Omnidirectional High Sensitivity Active</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Accent:</span>
+                    <select
+                      value={voiceLang}
+                      onChange={(e) => handleLanguageChange(e.target.value)}
+                      style={{
+                        background: "var(--bg-hover)",
+                        border: "1px solid var(--border-card)",
+                        color: "var(--text-primary)",
+                        borderRadius: "6px",
+                        padding: "3px 8px",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="en-IN">🇮🇳 English (India / Hinglish)</option>
+                      <option value="en-US">🇺🇸 English (US)</option>
+                      <option value="hi-IN">🇮🇳 Hindi (हिन्दी)</option>
+                      <option value="en-GB">🇬🇧 English (UK)</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="speaker-selector-bar">
@@ -2316,6 +2413,44 @@ export default function App() {
                 </div>
               </div>
 
+              {micStatus === "denied" && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    background: "#ef444415",
+                    border: "1px solid #ef444440",
+                    borderRadius: "var(--radius-md)",
+                    color: "var(--danger)",
+                    fontSize: 12,
+                    marginBottom: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>⚠️ <b>Microphone Access Blocked:</b> Please allow microphone permissions in your browser address bar.</span>
+                  <button className="btn" style={{ fontSize: 11 }} onClick={startVoiceRecording}>
+                    Retry Mic
+                  </button>
+                </div>
+              )}
+
+              {micStatus === "unsupported" && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    background: "#f59e0b15",
+                    border: "1px solid #f59e0b40",
+                    borderRadius: "var(--radius-md)",
+                    color: "var(--warning)",
+                    fontSize: 12,
+                    marginBottom: 10,
+                  }}
+                >
+                  ⚠️ <b>Browser Note:</b> Native speech recognition is not supported in this browser. Please use <b>Google Chrome</b>, <b>Microsoft Edge</b>, or <b>Safari</b> for live voice dictation.
+                </div>
+              )}
+
               {/* Live Canvas */}
               <div className="voice-transcript-canvas">
                 {speakerTurns.length > 0 ? (
@@ -2333,25 +2468,25 @@ export default function App() {
                         </div>
                       </div>
                     ))}
-                    {voiceTranscript && isRecording && (
-                      <div className="speaker-turn-card" style={{ opacity: 0.85, borderStyle: "dashed" }}>
+                    {liveInterimText && isRecording && (
+                      <div className="speaker-turn-card" style={{ opacity: 0.9, borderStyle: "dashed", borderColor: "var(--primary)" }}>
                         <div className="speaker-turn-avatar spk-0">{activeSpeaker.charAt(0)}</div>
                         <div className="speaker-turn-content">
                           <b>{activeSpeaker} (speaking...)</b>
                           <p>
-                            {voiceTranscript}
+                            {liveInterimText}
                             <span className="voice-pulse-cursor" />
                           </p>
                         </div>
                       </div>
                     )}
                   </div>
-                ) : voiceTranscript ? (
+                ) : voiceTranscript || liveInterimText ? (
                   <div>
                     <div style={{ marginBottom: 6, fontSize: 11, fontWeight: 600, color: "var(--primary)" }}>
                       Current Speaker: {activeSpeaker}
                     </div>
-                    <span>{voiceTranscript}</span>
+                    <span>{voiceTranscript || liveInterimText}</span>
                     {isRecording && <span className="voice-pulse-cursor" />}
                   </div>
                 ) : (
