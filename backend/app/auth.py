@@ -89,7 +89,7 @@ async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depen
             headers={"WWW-Authenticate": "Bearer"},
         )
     with db.connect() as c:
-        row = c.execute("SELECT id, email, full_name, is_verified, created_at FROM users WHERE id=?", (payload["sub"],)).fetchone()
+        row = c.execute("SELECT id, email, full_name, contact_no, age, job_title, preferences, is_verified, created_at FROM users WHERE id=?", (payload["sub"],)).fetchone()
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -97,6 +97,13 @@ async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depen
                 headers={"WWW-Authenticate": "Bearer"},
             )
         user = dict(row)
+        if isinstance(user.get("preferences"), str):
+            try:
+                user["preferences"] = json.loads(user["preferences"])
+            except Exception:
+                user["preferences"] = {}
+        user["contact_no"] = user.get("contact_no") or ""
+        user["job_title"] = user.get("job_title") or ""
         if not user.get("is_verified"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

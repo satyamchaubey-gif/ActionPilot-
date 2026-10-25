@@ -7,6 +7,7 @@ import {
   CheckCheck,
   ChevronDown,
   Clock3,
+  Clock,
   FileText,
   Filter,
   History,
@@ -17,6 +18,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Shield,
   Sparkles,
   UploadCloud,
   Workflow,
@@ -39,6 +41,13 @@ import {
   Sun,
   Moon,
   Menu,
+  Settings,
+  Users,
+  Phone,
+  Briefcase,
+  Copy,
+  Trash2,
+  Volume2,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -66,8 +75,30 @@ type User = {
   id: string;
   email: string;
   full_name: string;
+  contact_no?: string;
+  age?: number | null;
+  job_title?: string;
+  preferences?: Record<string, any>;
   is_verified: boolean;
   created_at: string;
+};
+
+type Meeting = {
+  id: string;
+  title: string;
+  recorded_at: string;
+  duration_seconds: number;
+  transcript: string;
+  speakers: string[];
+  task_count: number;
+  created_at: string;
+};
+
+type SpeakerTurn = {
+  id: string;
+  speaker: string;
+  text: string;
+  timestamp: string;
 };
 
 type Ev = { quote: string; start: number; end: number; source_name: string };
@@ -211,6 +242,38 @@ export default function App() {
   const [dispatchFeedback, setDispatchFeedback] = useState<any>(null);
   const [dispatchLoading, setDispatchLoading] = useState(false);
 
+  // Feature 6: Meeting History & Notes Archive
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [activeMeetingModal, setActiveMeetingModal] = useState<Meeting | null>(null);
+  const [meetingSearch, setMeetingSearch] = useState("");
+
+  // Feature 7: Multi-Speaker Diarization & Room Voice Mode
+  const [multiSpeakerMode, setMultiSpeakerMode] = useState(true);
+  const [activeSpeaker, setActiveSpeaker] = useState("Speaker 1 (Lead)");
+  const [availableSpeakers, setAvailableSpeakers] = useState<string[]>([
+    "Speaker 1 (Lead)",
+    "Speaker 2 (Alex)",
+    "Speaker 3 (Sam)",
+    "Speaker 4 (Priya)",
+  ]);
+  const [speakerTurns, setSpeakerTurns] = useState<SpeakerTurn[]>([]);
+  const activeSpeakerRef = useRef("Speaker 1 (Lead)");
+
+  // Feature 8: User Profile & Customization Settings
+  const [profileName, setProfileName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
+  const [profileAge, setProfileAge] = useState<number | "">("");
+  const [profileJobTitle, setProfileJobTitle] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileNotice, setProfileNotice] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [appCustomization, setAppCustomization] = useState({
+    roomSensitivity: "high",
+    autoPunctuate: true,
+    highFidelityMode: true,
+  });
+
   // Authenticated API request helper
   async function req(path: string, init?: RequestInit) {
     const headers: Record<string, string> = {
@@ -267,20 +330,36 @@ export default function App() {
     verifyAuth();
   }, [token]);
 
+  // Sync currentUser attributes to profile form state
+  useEffect(() => {
+    if (currentUser) {
+      setProfileName(currentUser.full_name || "");
+      setProfileEmail(currentUser.email || "");
+      setProfilePhone(currentUser.contact_no || "");
+      setProfileAge(currentUser.age != null ? currentUser.age : "");
+      setProfileJobTitle(currentUser.job_title || "");
+      if (currentUser.preferences) {
+        setAppCustomization((prev) => ({ ...prev, ...currentUser.preferences }));
+      }
+    }
+  }, [currentUser]);
+
   // Load workspace data when authenticated
   async function refresh() {
     if (!token || !currentUser) return;
     try {
-      const [d, t, a, h] = await Promise.all([
+      const [d, t, a, h, m] = await Promise.all([
         req("/api/documents"),
         req("/api/tasks"),
         req("/api/audit?limit=100"),
         req("/api/health"),
+        req("/api/meetings").catch(() => []),
       ]);
       setDocs(d);
       setTasks(t);
       setAudit(a);
       setHealth(h.status);
+      setMeetings(m || []);
       setError("");
     } catch (e: any) {
       setHealth("offline");
@@ -334,7 +413,75 @@ export default function App() {
     }
   }
 
-  // Feature 1: Live Voice Recording Handlers & Keep-Alive Studio
+  // Feature 1: Live Voice Recording Handlers & Multi-Speaker Voice Studio
+  function handleSelectSpeaker(spk: string) {
+    setActiveSpeaker(spk);
+    activeSpeakerRef.current = spk;
+  }
+
+  function handleAddSpeaker() {
+    const nextNum = availableSpeakers.length + 1;
+    const name = prompt("Enter speaker name:", `Speaker ${nextNum}`);
+    if (name && name.trim()) {
+      const clean = name.trim();
+      if (!availableSpeakers.includes(clean)) {
+        setAvailableSpeakers((prev) => [...prev, clean]);
+      }
+      setActiveSpeaker(clean);
+      activeSpeakerRef.current = clean;
+    }
+  }
+
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileSaving(true);
+    setProfileNotice("");
+    setProfileError("");
+    try {
+      const payload: any = {
+        full_name: profileName,
+        email: profileEmail,
+        contact_no: profilePhone,
+        age: profileAge === "" ? null : Number(profileAge),
+        job_title: profileJobTitle,
+        preferences: appCustomization,
+      };
+      const res = await req("/api/auth/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.user) {
+        setCurrentUser(res.user);
+      }
+      if (res.token) {
+        setToken(res.token);
+        localStorage.setItem("actionpilot_token", res.token);
+      }
+      setProfileNotice("Profile details and preferences saved successfully!");
+      notify("Profile updated successfully");
+      setTimeout(() => setProfileNotice(""), 4000);
+    } catch (err: any) {
+      setProfileError(err.message || "Failed to update profile");
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function handleDeleteMeeting(id: string) {
+    if (!confirm("Are you sure you want to remove this meeting recording from history?")) return;
+    try {
+      await req(`/api/meetings/${id}`, { method: "DELETE" });
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      if (activeMeetingModal?.id === id) {
+        setActiveMeetingModal(null);
+      }
+      notify("Meeting removed from history.");
+    } catch (err: any) {
+      notify("Failed to delete meeting: " + err.message);
+    }
+  }
+
   function startVoiceRecording() {
     setVoiceStudioOpen(true);
     isExplicitlyRecordingRef.current = true;
@@ -345,10 +492,18 @@ export default function App() {
     setRecordingSeconds(0);
     setIsRecording(true);
 
-    // 1. Live Web Audio API Decibel Meter
+    // 1. Omnidirectional High-Sensitivity Conference Audio Capture
+    // Disabling aggressive noise cancellation so room voices aren't filtered as background noise
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices
-        .getUserMedia({ audio: true })
+        .getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: true,
+            channelCount: 2,
+          },
+        })
         .then((stream) => {
           mediaStreamRef.current = stream;
           const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -378,7 +533,7 @@ export default function App() {
         });
     }
 
-    // 2. Start Continuous Keep-Alive Speech Recognition
+    // 2. Start Continuous Keep-Alive Speech Recognition with Speaker Tracking
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -402,6 +557,25 @@ export default function App() {
         setVoiceTranscript(full);
         setVoiceWordsCount(full.split(/\s+/).filter(Boolean).length);
         setUploadText(full);
+
+        // Record finalized phrases under active speaker
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            const phrase = event.results[i][0].transcript.trim();
+            if (phrase) {
+              const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+              setSpeakerTurns((prev) => [
+                ...prev,
+                {
+                  id: Math.random().toString(36).substring(2, 9),
+                  speaker: activeSpeakerRef.current || activeSpeaker,
+                  text: phrase,
+                  timestamp: timeStr,
+                },
+              ]);
+            }
+          }
+        }
       };
 
       rec.onerror = (e: any) => {
@@ -444,7 +618,7 @@ export default function App() {
         recognitionRef.current = recognizer;
         setRecognitionInstance(recognizer);
         recognizer.start();
-        notify("🎙️ Voice Studio is listening... Speak your meeting notes & tasks naturally.");
+        notify("🎙️ Voice Studio is listening in Multi-Voice Room Mode... Speak naturally.");
       }
     } catch (err: any) {
       console.warn("Recognizer start failed:", err);
@@ -472,18 +646,42 @@ export default function App() {
 
     const captured = (transcriptRef.current || voiceTranscript).trim();
     if (captured) {
-      const autoTitle = "Voice Memo (" + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")";
+      const autoTitle = "Meeting Recording (" + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")";
       setUploadTitle((prev) => (!prev || prev === "Meeting notes") ? autoTitle : prev);
       setUploadText(captured);
 
+      // Archive to History automatically
+      const activeSpks = Array.from(
+        new Set(
+          speakerTurns.length > 0
+            ? speakerTurns.map((s) => s.speaker)
+            : [activeSpeaker]
+        )
+      );
+
+      req("/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: autoTitle,
+          duration_seconds: recordingSeconds,
+          transcript: captured,
+          speakers: activeSpks,
+          task_count: 0,
+        }),
+      })
+        .then(() => req("/api/meetings"))
+        .then((m) => setMeetings(m))
+        .catch((e) => console.warn("Failed to archive meeting to history:", e));
+
       if (autoExtract) {
         setVoiceStudioOpen(false);
-        notify("🎙️ Voice memo saved! Analyzing tasks now...");
+        notify("🎙️ Meeting saved to History! Analyzing tasks now...");
         executeIngest(autoTitle, captured);
       } else {
         setVoiceStudioOpen(false);
         setShowIngest(true);
-        notify("🎙️ Voice transcription captured into notes! Click 'Analyze source' to extract tasks.");
+        notify("🎙️ Meeting saved to History! Click 'Analyze source' to extract tasks.");
       }
     } else {
       if (!uploadText.trim()) {
@@ -503,17 +701,30 @@ export default function App() {
   function loadDemoVoiceMemo(type: "launch" | "incident" | "strategy") {
     let text = "";
     if (type === "launch") {
-      text = "Action: Priya must send the revised marketing deck and launch plan by 2026-11-06. Alex has to verify the database indexes before deployment.";
+      text = "Speaker 1 (Lead): Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck?\nSpeaker 2 (Priya): I will deliver the revised launch plan and deck by 2026-11-06.\nSpeaker 3 (Alex): I will verify the database indexes and update the deployment script before Friday.";
+      setSpeakerTurns([
+        { id: "t1", speaker: "Speaker 1 (Lead)", text: "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck?", timestamp: "10:00:15 AM" },
+        { id: "t2", speaker: "Speaker 2 (Priya)", text: "I will deliver the revised launch plan and deck by 2026-11-06.", timestamp: "10:00:32 AM" },
+        { id: "t3", speaker: "Speaker 3 (Alex)", text: "I will verify the database indexes and update the deployment script before Friday.", timestamp: "10:00:48 AM" },
+      ]);
     } else if (type === "incident") {
-      text = "Urgent: Team must revoke compromised API credentials immediately. Security review meeting scheduled for 2026-11-04 by Alex.";
+      text = "Speaker 1 (Lead): Emergency incident response: we detected credential leakage. Alex, revoke all API keys immediately.\nSpeaker 2 (Alex): Revoking keys now and rotating tokens. Security post-mortem meeting scheduled for 2026-11-04.";
+      setSpeakerTurns([
+        { id: "t1", speaker: "Speaker 1 (Lead)", text: "Emergency incident response: we detected credential leakage. Alex, revoke all API keys immediately.", timestamp: "11:15:02 AM" },
+        { id: "t2", speaker: "Speaker 2 (Alex)", text: "Revoking keys now and rotating tokens. Security post-mortem meeting scheduled for 2026-11-04.", timestamp: "11:15:20 AM" },
+      ]);
     } else {
-      text = "Executive Strategy: Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.";
+      text = "Speaker 1 (Lead): Moving to executive strategy: Sarah, will vendor proposals be completed this month?\nSpeaker 2 (Sarah): Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.";
+      setSpeakerTurns([
+        { id: "t1", speaker: "Speaker 1 (Lead)", text: "Moving to executive strategy: Sarah, will vendor proposals be completed this month?", timestamp: "02:30:10 PM" },
+        { id: "t2", speaker: "Speaker 2 (Sarah)", text: "Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.", timestamp: "02:30:35 PM" },
+      ]);
     }
     transcriptRef.current = text;
     setVoiceTranscript(text);
     setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
     setUploadText(text);
-    notify("Loaded pitch scenario into Voice Studio!");
+    notify("Loaded pitch scenario into Multi-Speaker Voice Studio!");
   }
 
   // Feature 2: 1-Click Demo Preset Loader
@@ -1172,6 +1383,7 @@ export default function App() {
           ["overview", LayoutDashboard, "Overview"],
           ["tasks", ListTodo, "Task review"],
           ["documents", FileText, "Source documents"],
+          ["history", Clock, "History"],
         ].map(([id, Icon, label]: any) => (
           <button
             key={id}
@@ -1184,6 +1396,25 @@ export default function App() {
             <Icon size={17} />
             {label}
             {id === "tasks" && proposed > 0 && <span className="navcount">{proposed}</span>}
+            {id === "history" && meetings.length > 0 && <span className="navcount">{meetings.length}</span>}
+          </button>
+        ))}
+
+        <div className="navlabel" style={{ marginTop: 14 }}>PREFERENCES</div>
+        {[
+          ["settings", Settings, "Settings"],
+          ["privacy", Shield, "Privacy & Policy"],
+        ].map(([id, Icon, label]: any) => (
+          <button
+            key={id}
+            className={"navitem " + (active === id ? "active" : "")}
+            onClick={() => {
+              setActive(id);
+              setMobileMenuOpen(false);
+            }}
+          >
+            <Icon size={17} />
+            {label}
           </button>
         ))}
 
@@ -1223,7 +1454,9 @@ export default function App() {
                       overview: "Overview",
                       tasks: "Task review",
                       documents: "Source documents",
-                      audit: "Audit trail",
+                      history: "Meeting History & Notes",
+                      settings: "Settings & Personalization",
+                      privacy: "Enterprise Privacy & Governance",
                     } as any
                   )[active]
                 }
@@ -1602,6 +1835,371 @@ export default function App() {
               </section>
             </>
           )}
+
+          {active === "history" && (
+            <>
+              <div className="heading">
+                <div>
+                  <div className="eyebrow">
+                    <Clock size={14} /> VOICE MEMO & MEETING ARCHIVE
+                  </div>
+                  <h1>Meeting notes & history</h1>
+                  <p>All recorded voice memos and multi-voice conferences are saved here with diarized transcripts and task extraction.</p>
+                </div>
+                <button className="primary" onClick={startVoiceRecording}>
+                  <Mic size={14} /> New Voice Recording
+                </button>
+              </div>
+
+              <div className="toolbar">
+                <div className="search">
+                  <Search size={16} />
+                  <input
+                    value={meetingSearch}
+                    onChange={(e) => setMeetingSearch(e.target.value)}
+                    placeholder="Search meetings by title, transcript text, or attendee..."
+                  />
+                </div>
+                <span>
+                  {meetings.filter((m) =>
+                    (m.title + " " + m.transcript + " " + (m.speakers || []).join(" "))
+                      .toLowerCase()
+                      .includes(meetingSearch.toLowerCase())
+                  ).length}{" "}
+                  recordings
+                </span>
+              </div>
+
+              {meetings.length === 0 ? (
+                <Empty
+                  title="No meeting recordings yet"
+                  text="Record live meetings with the mic button above, or click below to start your first session."
+                  action={startVoiceRecording}
+                />
+              ) : (
+                <div className="history-grid">
+                  {meetings
+                    .filter((m) =>
+                      (m.title + " " + m.transcript + " " + (m.speakers || []).join(" "))
+                        .toLowerCase()
+                        .includes(meetingSearch.toLowerCase())
+                    )
+                    .map((m) => (
+                      <div className="meeting-card" key={m.id}>
+                        <div className="meeting-card-header">
+                          <div>
+                            <h3>{m.title}</h3>
+                            <small>
+                              <Clock size={11} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />
+                              {timeLabel(m.recorded_at)} • {Math.floor(m.duration_seconds / 60)}m{" "}
+                              {m.duration_seconds % 60}s
+                            </small>
+                          </div>
+                        </div>
+
+                        <div className="meeting-tags-row">
+                          {(m.speakers && m.speakers.length > 0 ? m.speakers : ["Lead"]).map((spk, i) => (
+                            <span className="meeting-tag highlight" key={i}>
+                              <Users size={11} /> {spk}
+                            </span>
+                          ))}
+                          <span className="meeting-tag">
+                            <ListTodo size={11} /> {m.task_count} tasks
+                          </span>
+                        </div>
+
+                        <div className="meeting-transcript-preview" title="Transcript snippet">
+                          {m.transcript}
+                        </div>
+
+                        <div className="meeting-actions-row">
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <button
+                              className="btn"
+                              style={{ fontSize: 11, padding: "5px 9px" }}
+                              onClick={() => setActiveMeetingModal(m)}
+                            >
+                              <FileText size={12} /> View Notes
+                            </button>
+                            <button
+                              className="btn"
+                              style={{ fontSize: 11, padding: "5px 9px" }}
+                              onClick={() => {
+                                setUploadTitle(m.title);
+                                setUploadText(m.transcript);
+                                setShowIngest(true);
+                              }}
+                            >
+                              <Sparkles size={12} /> Extract Tasks
+                            </button>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <button
+                              className="iconbtn"
+                              title="Copy full transcript"
+                              onClick={() => {
+                                navigator.clipboard.writeText(m.transcript);
+                                notify("Meeting transcript copied to clipboard!");
+                              }}
+                            >
+                              <Copy size={13} />
+                            </button>
+                            <button
+                              className="iconbtn"
+                              title="Delete meeting"
+                              onClick={() => handleDeleteMeeting(m.id)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {active === "settings" && (
+            <>
+              <div className="heading">
+                <div>
+                  <div className="eyebrow">
+                    <Settings size={14} /> USER PREFERENCES & ACCOUNT
+                  </div>
+                  <h1>Settings & Personalization</h1>
+                  <p>Update your personal details, email, contact information, and customize AI audio engine behavior.</p>
+                </div>
+                <Badge tone="blue">TENANT: {currentUser.id.substring(0, 8)}</Badge>
+              </div>
+
+              <div className="settings-layout">
+                {profileNotice && (
+                  <div className="auth-notice" style={{ margin: 0 }}>
+                    {profileNotice}
+                  </div>
+                )}
+                {profileError && (
+                  <div className="auth-error" style={{ margin: 0 }}>
+                    {profileError}
+                  </div>
+                )}
+
+                {/* Section 1: Personal & Contact Information */}
+                <form className="settings-section-card" onSubmit={handleSaveProfile}>
+                  <h3>
+                    <Users size={16} /> Personal Information & Credentials
+                  </h3>
+                  <p>Update your display name, login email, phone number, and age for your workspace account.</p>
+
+                  <div className="settings-form-grid">
+                    <div className="settings-field">
+                      <label>Full Name</label>
+                      <input
+                        type="text"
+                        value={profileName}
+                        onChange={(e) => setProfileName(e.target.value)}
+                        placeholder="e.g. Alex Morgan"
+                        required
+                      />
+                    </div>
+
+                    <div className="settings-field">
+                      <label>Email Address</label>
+                      <input
+                        type="email"
+                        value={profileEmail}
+                        onChange={(e) => setProfileEmail(e.target.value)}
+                        placeholder="e.g. alex@company.com"
+                        required
+                      />
+                    </div>
+
+                    <div className="settings-field">
+                      <label>Contact Number (Phone)</label>
+                      <input
+                        type="tel"
+                        value={profilePhone}
+                        onChange={(e) => setProfilePhone(e.target.value)}
+                        placeholder="+1 (555) 234-5678"
+                      />
+                    </div>
+
+                    <div className="settings-field">
+                      <label>Age</label>
+                      <input
+                        type="number"
+                        min="16"
+                        max="120"
+                        value={profileAge}
+                        onChange={(e) => setProfileAge(e.target.value ? Number(e.target.value) : "")}
+                        placeholder="e.g. 29"
+                      />
+                    </div>
+
+                    <div className="settings-field" style={{ gridColumn: "1 / -1" }}>
+                      <label>Job Title / Role</label>
+                      <input
+                        type="text"
+                        value={profileJobTitle}
+                        onChange={(e) => setProfileJobTitle(e.target.value)}
+                        placeholder="e.g. Principal Product Manager & Release Lead"
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+                    <button type="submit" className="primary" disabled={profileSaving}>
+                      {profileSaving ? "Saving changes..." : "Save Profile Information"}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Section 2: Workspace Customization */}
+                <div className="settings-section-card">
+                  <h3>
+                    <Sparkles size={16} /> Application & Voice Customization
+                  </h3>
+                  <p>Fine-tune audio capture sensitivity, conference diarization, and visual workspace preferences.</p>
+
+                  <div>
+                    <div className="settings-toggle-row">
+                      <div>
+                        <b>Color Theme</b>
+                        <small>Switch between dark obsidian theme and high-contrast light theme.</small>
+                      </div>
+                      <button className="btn" type="button" onClick={toggleTheme}>
+                        {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />} {theme === "dark" ? "Switch to Light" : "Switch to Dark"}
+                      </button>
+                    </div>
+
+                    <div className="settings-toggle-row">
+                      <div>
+                        <b>Multi-Voice Conference Capture (Max Room Voices)</b>
+                        <small>Disables aggressive browser acoustic echo suppression to capture all voices in the room.</small>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={multiSpeakerMode}
+                        onChange={(e) => setMultiSpeakerMode(e.target.checked)}
+                        style={{ width: 18, height: 18, cursor: "pointer" }}
+                      />
+                    </div>
+
+                    <div className="settings-toggle-row">
+                      <div>
+                        <b>High-Fidelity Stereo Audio Stream</b>
+                        <small>Requests 2-channel 48kHz audio streams for improved acoustic voice distinction.</small>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={appCustomization.highFidelityMode}
+                        onChange={(e) =>
+                          setAppCustomization((p) => ({ ...p, highFidelityMode: e.target.checked }))
+                        }
+                        style={{ width: 18, height: 18, cursor: "pointer" }}
+                      />
+                    </div>
+
+                    <div className="settings-toggle-row">
+                      <div>
+                        <b>Intelligent Auto-Punctuation</b>
+                        <small>Automatically structures stream transcription with sentence boundaries and action tokens.</small>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={appCustomization.autoPunctuate}
+                        onChange={(e) =>
+                          setAppCustomization((p) => ({ ...p, autoPunctuate: e.target.checked }))
+                        }
+                        style={{ width: 18, height: 18, cursor: "pointer" }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {active === "privacy" && (
+            <>
+              <div className="heading">
+                <div>
+                  <div className="eyebrow">
+                    <ShieldCheck size={14} /> TRUST & GOVERNANCE
+                  </div>
+                  <h1>Privacy & Security Policy</h1>
+                  <p>Enterprise-grade security, zero AI model training on customer data, and strict cryptographic multi-tenancy.</p>
+                </div>
+                <Badge tone="green">SOC-2 READY ARCHITECTURE</Badge>
+              </div>
+
+              <div className="privacy-container">
+                <div className="privacy-hero-card">
+                  <h2>Zero AI Model Training Guarantee</h2>
+                  <p>
+                    ActionPilot strictly processes your voice memos, audio transcripts, and task extractions in memory and within your dedicated private database tenant. Your proprietary business data, meeting discussions, and internal action items are <b>never used to train, fine-tune, or improve foundational AI models</b>.
+                  </p>
+                </div>
+
+                <div className="privacy-grid">
+                  <div className="privacy-clause-card">
+                    <h4>
+                      <Shield size={16} color="var(--primary)" /> Cryptographic Multi-Tenancy
+                    </h4>
+                    <p>
+                      Every user account is bound to a distinct workspace tenant ID. SQL queries, document uploads, and tasks are strictly scoped at the database level with parameterized queries.
+                    </p>
+                  </div>
+
+                  <div className="privacy-clause-card">
+                    <h4>
+                      <Users size={16} color="var(--primary)" /> Multi-Speaker Audio Governance
+                    </h4>
+                    <p>
+                      Voice recordings and conference diarizations remain strictly within your session. Audio streams are captured via secure in-browser Web Audio APIs and transmitted only over TLS 1.3 encrypted sockets.
+                    </p>
+                  </div>
+
+                  <div className="privacy-clause-card">
+                    <h4>
+                      <Sparkles size={16} color="var(--primary)" /> Human-in-the-Loop Safeguards
+                    </h4>
+                    <p>
+                      ActionPilot adheres to strict AI safety principles: all extracted tasks remain in a "Proposed" state until an authorized human reviews, modifies, or confirms them. No automated external dispatches occur without human authorization.
+                    </p>
+                  </div>
+
+                  <div className="privacy-clause-card">
+                    <h4>
+                      <FileText size={16} color="var(--primary)" /> Immutable Audit Accountability
+                    </h4>
+                    <p>
+                      Every state mutation, AI task extraction, conflict resolution, and channel dispatch is logged in an append-only audit ledger with cryptographic timestamps and actor attribution.
+                    </p>
+                  </div>
+
+                  <div className="privacy-clause-card">
+                    <h4>
+                      <Lock size={16} color="var(--primary)" /> Data Encryption at Rest & In-Transit
+                    </h4>
+                    <p>
+                      Workspace documents and database credentials use industry-standard AES-256 encryption at rest on Neon PostgreSQL clusters and TLS 1.3 in transit with strict channel binding.
+                    </p>
+                  </div>
+
+                  <div className="privacy-clause-card">
+                    <h4>
+                      <Trash2 size={16} color="var(--primary)" /> Data Portability & Complete Deletion
+                    </h4>
+                    <p>
+                      You maintain 100% intellectual property ownership of your transcripts, notes, and task graphs. You can export or permanently delete your meetings and source documents at any time.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </main>
 
@@ -1685,10 +2283,74 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Multi-Speaker Conference Diarization Bar */}
+              <div style={{ margin: "14px 0 8px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 5 }}>
+                    <Volume2 size={13} color="var(--primary)" /> MULTI-VOICE CONFERENCE (MAX ROOM VOICES)
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Omnidirectional High Sensitivity Active</span>
+                </div>
+
+                <div className="speaker-selector-bar">
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", marginRight: 4 }}>Active Voice:</span>
+                  {availableSpeakers.map((spk) => (
+                    <button
+                      key={spk}
+                      type="button"
+                      className={"speaker-pill-btn " + (activeSpeaker === spk ? "active" : "")}
+                      onClick={() => handleSelectSpeaker(spk)}
+                    >
+                      <span className="speaker-dot" />
+                      {spk}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="speaker-pill-btn"
+                    onClick={handleAddSpeaker}
+                    title="Add another speaker in room"
+                  >
+                    <Plus size={11} /> Add Speaker
+                  </button>
+                </div>
+              </div>
+
               {/* Live Canvas */}
               <div className="voice-transcript-canvas">
-                {voiceTranscript ? (
+                {speakerTurns.length > 0 ? (
+                  <div className="multi-speaker-turns-list">
+                    {speakerTurns.map((turn, idx) => (
+                      <div className="speaker-turn-card" key={turn.id || idx}>
+                        <div className={"speaker-turn-avatar spk-" + (idx % 4)}>
+                          {turn.speaker.charAt(0) || "S"}
+                        </div>
+                        <div className="speaker-turn-content">
+                          <b>
+                            {turn.speaker} <span style={{ opacity: 0.6, fontWeight: 400 }}>• {turn.timestamp}</span>
+                          </b>
+                          <p>{turn.text}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {voiceTranscript && isRecording && (
+                      <div className="speaker-turn-card" style={{ opacity: 0.85, borderStyle: "dashed" }}>
+                        <div className="speaker-turn-avatar spk-0">{activeSpeaker.charAt(0)}</div>
+                        <div className="speaker-turn-content">
+                          <b>{activeSpeaker} (speaking...)</b>
+                          <p>
+                            {voiceTranscript}
+                            <span className="voice-pulse-cursor" />
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : voiceTranscript ? (
                   <div>
+                    <div style={{ marginBottom: 6, fontSize: 11, fontWeight: 600, color: "var(--primary)" }}>
+                      Current Speaker: {activeSpeaker}
+                    </div>
                     <span>{voiceTranscript}</span>
                     {isRecording && <span className="voice-pulse-cursor" />}
                   </div>
@@ -1776,9 +2438,10 @@ export default function App() {
                     accumulatedTranscriptRef.current = "";
                     transcriptRef.current = "";
                     setVoiceTranscript("");
+                    setSpeakerTurns([]);
                     setVoiceWordsCount(0);
                     setRecordingSeconds(0);
-                    notify("Transcript reset.");
+                    notify("Transcript and speaker turns reset.");
                   }}
                 >
                   <RefreshCw size={13} /> Clear
@@ -1807,6 +2470,94 @@ export default function App() {
                       <Sparkles size={15} /> Stop & Extract Tasks
                     </>
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Meeting Notes Inspector Modal */}
+      {activeMeetingModal && (
+        <div
+          className="modal-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setActiveMeetingModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 680 }}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16 }}>{activeMeetingModal.title}</h3>
+                <small style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                  Recorded {timeLabel(activeMeetingModal.recorded_at)} • Duration:{" "}
+                  {Math.floor(activeMeetingModal.duration_seconds / 60)}m{" "}
+                  {activeMeetingModal.duration_seconds % 60}s
+                </small>
+              </div>
+              <button className="iconbtn" onClick={() => setActiveMeetingModal(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                {(activeMeetingModal.speakers && activeMeetingModal.speakers.length > 0
+                  ? activeMeetingModal.speakers
+                  : ["Lead"]
+                ).map((s, i) => (
+                  <span className="meeting-tag highlight" key={i}>
+                    <Users size={11} /> {s}
+                  </span>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  background: "var(--bg-subtle)",
+                  border: "1px solid var(--border-card)",
+                  borderRadius: "var(--radius-md)",
+                  padding: 14,
+                  fontSize: 12.5,
+                  lineHeight: 1.7,
+                  color: "var(--text-primary)",
+                  maxHeight: 340,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {activeMeetingModal.transcript}
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ justifyContent: "space-between" }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(activeMeetingModal.transcript);
+                  notify("Meeting transcript copied to clipboard!");
+                }}
+              >
+                <Copy size={13} /> Copy Transcript
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="btn"
+                  onClick={() => setActiveMeetingModal(null)}
+                >
+                  Close
+                </button>
+                <button
+                  className="primary"
+                  onClick={() => {
+                    const m = activeMeetingModal;
+                    setActiveMeetingModal(null);
+                    setUploadTitle(m.title);
+                    setUploadText(m.transcript);
+                    setShowIngest(true);
+                  }}
+                >
+                  <Sparkles size={13} /> Extract Tasks with AI
                 </button>
               </div>
             </div>

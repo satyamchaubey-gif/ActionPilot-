@@ -1,4 +1,4 @@
-import os, sqlite3, logging, ssl
+import os, sys, sqlite3, logging, ssl
 from pathlib import Path
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -17,7 +17,7 @@ def get_database_url() -> str:
     return os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or ""
 
 def is_postgres() -> bool:
-    if os.getenv("PYTEST_CURRENT_TEST"):
+    if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
         return False
     url = get_database_url().strip()
     return url.startswith("postgres://") or url.startswith("postgresql://")
@@ -253,7 +253,23 @@ def init_db():
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 full_name TEXT NOT NULL DEFAULT '',
+                contact_no TEXT NOT NULL DEFAULT '',
+                age INTEGER,
+                job_title TEXT NOT NULL DEFAULT '',
+                preferences TEXT NOT NULL DEFAULT '{}',
                 is_verified INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS meetings (
+                id TEXT PRIMARY KEY,
+                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                transcript TEXT NOT NULL,
+                speakers TEXT NOT NULL DEFAULT '[]',
+                task_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
 
@@ -319,10 +335,23 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
             CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_events(user_id);
             CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings(user_id);
+            CREATE INDEX IF NOT EXISTS idx_meetings_created ON meetings(created_at DESC);
             """)
 
+            # Migration check: Ensure user columns exist
+            user_cols = [r[0] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'").fetchall()]
+            if user_cols and "contact_no" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN contact_no TEXT NOT NULL DEFAULT ''")
+            if user_cols and "age" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN age INTEGER")
+            if user_cols and "job_title" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''")
+            if user_cols and "preferences" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'")
+
             # Migration check: Ensure user_id column exists
-            for table in ("documents", "tasks", "audit_events"):
+            for table in ("documents", "tasks", "audit_events", "meetings"):
                 cols = [r[0] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name = ?", (table,)).fetchall()]
                 if cols and "user_id" not in cols:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE")
@@ -343,7 +372,23 @@ def init_db():
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 full_name TEXT NOT NULL DEFAULT '',
+                contact_no TEXT NOT NULL DEFAULT '',
+                age INTEGER,
+                job_title TEXT NOT NULL DEFAULT '',
+                preferences TEXT NOT NULL DEFAULT '{}',
                 is_verified INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS meetings (
+                id TEXT PRIMARY KEY,
+                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                transcript TEXT NOT NULL,
+                speakers TEXT NOT NULL DEFAULT '[]',
+                task_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
 
@@ -409,9 +454,21 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
             CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_events(user_id);
             CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings(user_id);
+            CREATE INDEX IF NOT EXISTS idx_meetings_created ON meetings(created_at DESC);
             """)
 
-            for table in ("documents", "tasks", "audit_events"):
+            user_cols = [row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()]
+            if "contact_no" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN contact_no TEXT NOT NULL DEFAULT ''")
+            if "age" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN age INTEGER")
+            if "job_title" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT ''")
+            if "preferences" not in user_cols:
+                c.execute("ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'")
+
+            for table in ("documents", "tasks", "audit_events", "meetings"):
                 cols = [row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()]
                 if "user_id" not in cols:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE")

@@ -12,7 +12,8 @@ from . import db
 from .schemas import (
     TextIngest, TaskPatch, ActionDraft,
     UserSignUp, UserLogin, VerifyEmail, ResendCode,
-    AuthResponse, UserResponse,
+    AuthResponse, UserResponse, UserProfileUpdate,
+    MeetingCreate, MeetingResponse,
     DispatchAction, ConflictResolution, DemoPresetRequest
 )
 from .extractor import extract_tasks
@@ -247,10 +248,19 @@ def login(payload: UserLogin):
 
         audit(c, "user", user_id, "user_logged_in", {"email": email}, actor=email, user_id=user_id)
 
+    prefs = user.get("preferences") or {}
+    if isinstance(prefs, str):
+        try: prefs = json.loads(prefs)
+        except: prefs = {}
+
     user_resp = UserResponse(
         id=user["id"],
         email=user["email"],
         full_name=user["full_name"],
+        contact_no=user.get("contact_no") or "",
+        age=user.get("age"),
+        job_title=user.get("job_title") or "",
+        preferences=prefs,
         is_verified=bool(user["is_verified"]),
         created_at=user["created_at"]
     )
@@ -264,13 +274,166 @@ def login(payload: UserLogin):
 
 @app.get("/api/auth/me", response_model=UserResponse)
 def get_me(current_user: dict = Depends(get_current_user)):
+    prefs = current_user.get("preferences") or {}
+    if isinstance(prefs, str):
+        try: prefs = json.loads(prefs)
+        except: prefs = {}
     return UserResponse(
         id=current_user["id"],
         email=current_user["email"],
         full_name=current_user["full_name"],
+        contact_no=current_user.get("contact_no") or "",
+        age=current_user.get("age"),
+        job_title=current_user.get("job_title") or "",
+        preferences=prefs,
         is_verified=bool(current_user["is_verified"]),
         created_at=current_user["created_at"]
     )
+
+@app.patch("/api/auth/profile", response_model=AuthResponse)
+def update_profile(
+    payload: UserProfileUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "No profile changes provided")
+
+    user_id = current_user["id"]
+    new_email = current_user["email"]
+
+    with db.connect() as c:
+        if "email" in updates and updates["email"]:
+            clean_email = updates["email"].lower().strip()
+            if not EMAIL_REGEX.match(clean_email):
+                raise HTTPException(400, "Invalid email address format.")
+            if clean_email != current_user["email"]:
+                existing = c.execute("SELECT id FROM users WHERE email=? AND id != ?", (clean_email, user_id)).fetchone()
+                if existing:
+                    raise HTTPException(409, "Email is already in use by another account.")
+                new_email = clean_email
+                updates["email"] = clean_email
+
+        set_clauses = []
+        params = []
+        for k, v in updates.items():
+            if k in ("full_name", "email", "contact_no", "age", "job_title"):
+                set_clauses.append(f"{k} = ?")
+                params.append(v)
+            elif k == "preferences" and isinstance(v, dict):
+                set_clauses.append("preferences = ?")
+                params.append(json.dumps(v))
+
+        if set_clauses:
+            params.append(user_id)
+            c.execute(f"UPDATE users SET {', '.join(set_clauses)} WHERE id = ?", params)
+            audit(c, "user", user_id, "user_profile_updated", updates, actor=new_email, user_id=user_id)
+
+        updated_row = c.execute("SELECT id, email, full_name, contact_no, age, job_title, preferences, is_verified, created_at FROM users WHERE id=?", (user_id,)).fetchone()
+        u = dict(updated_row)
+        u_prefs = u.get("preferences") or {}
+        if isinstance(u_prefs, str):
+            try: u_prefs = json.loads(u_prefs)
+            except: u_prefs = {}
+
+    token = create_access_token(user_id, new_email)
+    return AuthResponse(
+        token=token,
+        user=UserResponse(
+            id=u["id"],
+            email=u["email"],
+            full_name=u["full_name"],
+            contact_no=u.get("contact_no") or "",
+            age=u.get("age"),
+            job_title=u.get("job_title") or "",
+            preferences=u_prefs,
+            is_verified=bool(u["is_verified"]),
+            created_at=u["created_at"]
+        ),
+        requires_verification=False,
+        message="Profile and settings updated successfully!"
+    )
+
+# -------------------------------------------------------------
+# Meetings & Voice Notes History
+# -------------------------------------------------------------
+
+@app.get("/api/meetings")
+def list_meetings(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user)
+):
+    with db.connect() as c:
+        rows = c.execute(
+            "SELECT * FROM meetings WHERE user_id = ? ORDER BY recorded_at DESC LIMIT ?",
+            (current_user["id"], limit)
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if isinstance(d.get("speakers"), str):
+                try: d["speakers"] = json.loads(d["speakers"])
+                except: d["speakers"] = []
+            result.append(d)
+        return result
+
+@app.post("/api/meetings")
+async def save_meeting(
+    payload: MeetingCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    mid = uid()
+    rec_time = now()
+    speakers_list = payload.speakers or ["Speaker 1"]
+    speakers_json = json.dumps(speakers_list)
+    task_count = 0
+
+    if payload.auto_extract_tasks:
+        try:
+            did, dup = await ingest(
+                payload.title,
+                f"meeting_{mid[:8]}.txt",
+                payload.transcript,
+                user_id=current_user["id"],
+                actor=current_user["email"]
+            )
+            with db.connect() as c:
+                task_count = c.execute("SELECT count(*) FROM tasks WHERE document_id = ? AND user_id = ?", (did, current_user["id"])).fetchone()[0]
+        except Exception as e:
+            logging.getLogger("actionpilot").warning("Auto extraction on meeting failed: %s", e)
+
+    with db.connect() as c:
+        c.execute(
+            """INSERT INTO meetings(id, user_id, title, recorded_at, duration_seconds, transcript, speakers, task_count, created_at)
+               VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (mid, current_user["id"], payload.title, rec_time, payload.duration_seconds, payload.transcript, speakers_json, task_count, rec_time)
+        )
+        audit(c, "meeting", mid, "meeting_recorded", {"title": payload.title, "duration": payload.duration_seconds, "task_count": task_count}, actor=current_user["email"], user_id=current_user["id"])
+
+    return {
+        "id": mid,
+        "title": payload.title,
+        "recorded_at": rec_time,
+        "duration_seconds": payload.duration_seconds,
+        "transcript": payload.transcript,
+        "speakers": speakers_list,
+        "task_count": task_count,
+        "created_at": rec_time,
+        "message": "Meeting note recorded and saved to History!"
+    }
+
+@app.delete("/api/meetings/{mid}")
+def delete_meeting(
+    mid: str,
+    current_user: dict = Depends(get_current_user)
+):
+    with db.connect() as c:
+        existing = c.execute("SELECT id FROM meetings WHERE id=? AND user_id=?", (mid, current_user["id"])).fetchone()
+        if not existing:
+            raise HTTPException(404, "Meeting record not found")
+        c.execute("DELETE FROM meetings WHERE id=? AND user_id=?", (mid, current_user["id"]))
+        audit(c, "meeting", mid, "meeting_deleted", {}, actor=current_user["email"], user_id=current_user["id"])
+    return {"success": True, "message": "Meeting note deleted from history."}
 
 # -------------------------------------------------------------
 # Documents & Workflows (Scoped to Authenticated User)

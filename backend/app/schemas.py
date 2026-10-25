@@ -64,7 +64,36 @@ class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
+    contact_no: str = ""
+    age: Optional[int] = None
+    job_title: str = ""
+    preferences: dict = Field(default_factory=dict)
     is_verified: bool
+    created_at: str
+
+class UserProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    contact_no: Optional[str] = None
+    age: Optional[int] = None
+    job_title: Optional[str] = None
+    preferences: Optional[dict] = None
+
+class MeetingCreate(BaseModel):
+    title: str = "Voice Meeting Recording"
+    transcript: str = Field(min_length=1)
+    duration_seconds: int = 0
+    speakers: list[str] = Field(default_factory=list)
+    auto_extract_tasks: bool = True
+
+class MeetingResponse(BaseModel):
+    id: str
+    title: str
+    recorded_at: str
+    duration_seconds: int
+    transcript: str
+    speakers: list[str] = Field(default_factory=list)
+    task_count: int = 0
     created_at: str
 
 class AuthResponse(BaseModel):
