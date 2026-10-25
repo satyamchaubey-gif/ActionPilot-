@@ -153,14 +153,24 @@ export default function App() {
   const [auditFilter, setAuditFilter] = useState("");
 
   // ================= Top-5 Hackathon Features States =================
-  // Feature 1: Live Voice Note Recording
+  // Feature 1: Live Voice Note Recording & Voice Intelligence Studio
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [recognitionInstance, setRecognitionInstance] = useState<any>(null);
+  const [voiceStudioOpen, setVoiceStudioOpen] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [voiceWordsCount, setVoiceWordsCount] = useState(0);
+
   const transcriptRef = useRef("");
   const recognitionRef = useRef<any>(null);
   const initialUploadTextRef = useRef("");
+  const isExplicitlyRecordingRef = useRef(false);
+  const accumulatedTranscriptRef = useRef("");
+  const audioContextRef = useRef<any>(null);
+  const analyserRef = useRef<any>(null);
+  const mediaStreamRef = useRef<any>(null);
+  const animFrameRef = useRef<any>(null);
 
   // Feature 2: 1-Click Demo Presets
   const [showDemoMenu, setShowDemoMenu] = useState(false);
@@ -301,112 +311,186 @@ export default function App() {
     }
   }
 
-  // Feature 1: Live Voice Recording Handlers
+  // Feature 1: Live Voice Recording Handlers & Keep-Alive Studio
   function startVoiceRecording() {
+    setVoiceStudioOpen(true);
+    isExplicitlyRecordingRef.current = true;
+    accumulatedTranscriptRef.current = "";
+    transcriptRef.current = "";
+    setVoiceTranscript("");
+    setVoiceWordsCount(0);
+    setRecordingSeconds(0);
+    setIsRecording(true);
+
+    // 1. Live Web Audio API Decibel Meter
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          mediaStreamRef.current = stream;
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioContextClass) {
+            const ctx = new AudioContextClass();
+            audioContextRef.current = ctx;
+            const src = ctx.createMediaStreamSource(stream);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 64;
+            src.connect(analyser);
+            analyserRef.current = analyser;
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            const pollAudio = () => {
+              if (!isExplicitlyRecordingRef.current) return;
+              analyser.getByteFrequencyData(data);
+              let sum = 0;
+              for (let i = 0; i < data.length; i++) sum += data[i];
+              const level = Math.min(100, Math.round((sum / data.length) * 1.8));
+              setAudioLevel(level);
+              animFrameRef.current = requestAnimationFrame(pollAudio);
+            };
+            pollAudio();
+          }
+        })
+        .catch((err) => {
+          console.warn("Audio meter init warning:", err);
+        });
+    }
+
+    // 2. Start Continuous Keep-Alive Speech Recognition
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      // Browser fallback simulation
-      const fallbackText =
-        "Meeting with Client: Priya must send the revised launch plan by 2026-11-06. Updated note confirmed Nov 6th as the final deadline.";
-      setUploadTitle("Voice Memo (Transcription)");
-      setUploadText(fallbackText);
-      setShowIngest(true);
-      notify("Browser Web Speech API not detected — loaded voice transcription template into notes!");
+      notify("Web Speech API not detected in this browser — Voice Studio loaded in interactive demo mode!");
       return;
     }
+
+    function createRecognizer() {
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "en-US";
+
+      rec.onresult = (event: any) => {
+        let currentSessionText = "";
+        for (let i = 0; i < event.results.length; ++i) {
+          currentSessionText += event.results[i][0].transcript + " ";
+        }
+        const full = (accumulatedTranscriptRef.current + " " + currentSessionText).trim();
+        transcriptRef.current = full;
+        setVoiceTranscript(full);
+        setVoiceWordsCount(full.split(/\s+/).filter(Boolean).length);
+        setUploadText(full);
+      };
+
+      rec.onerror = (e: any) => {
+        console.warn("Speech recognition warning:", e.error);
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          isExplicitlyRecordingRef.current = false;
+          setIsRecording(false);
+          notify("Microphone permission denied. Please allow microphone in browser settings.");
+        }
+      };
+
+      rec.onend = () => {
+        // Continuous Keep-Alive: If user hasn't clicked stop, auto-restart seamlessly!
+        if (isExplicitlyRecordingRef.current) {
+          accumulatedTranscriptRef.current = transcriptRef.current;
+          try {
+            const nextRec = createRecognizer();
+            if (nextRec) {
+              recognitionRef.current = nextRec;
+              setRecognitionInstance(nextRec);
+              nextRec.start();
+            }
+          } catch (err) {
+            console.warn("Keep-alive auto-restart failed:", err);
+          }
+        } else {
+          setIsRecording(false);
+        }
+      };
+
+      return rec;
+    }
+
     try {
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch {}
       }
-
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "en-US";
-
-      initialUploadTextRef.current = uploadText;
-      transcriptRef.current = "";
-      setVoiceTranscript("");
-      setRecordingSeconds(0);
-      setIsRecording(true);
-
-      recognition.onresult = (event: any) => {
-        let fullTranscript = "";
-        for (let i = 0; i < event.results.length; ++i) {
-          fullTranscript += event.results[i][0].transcript + " ";
-        }
-        const clean = fullTranscript.trim();
-        transcriptRef.current = clean;
-        setVoiceTranscript(clean);
-
-        // LIVE STREAM DIRECTLY INTO uploadText!
-        const combined = initialUploadTextRef.current.trim()
-          ? `${initialUploadTextRef.current.trim()}\n${clean}`
-          : clean;
-        setUploadText(combined);
-      };
-
-      recognition.onerror = (e: any) => {
-        console.error("Speech error", e);
-        setIsRecording(false);
-        if (e.error === "not-allowed") {
-          notify("Microphone permission denied. Please allow microphone access in your browser.");
-        }
-      };
-
-      recognition.onend = () => {
-        setIsRecording(false);
-      };
-
-      recognition.start();
-      recognitionRef.current = recognition;
-      setRecognitionInstance(recognition);
-      notify("🎙️ Listening... Speak naturally! Speech streams directly into notes.");
-    } catch (e: any) {
-      setIsRecording(false);
-      notify("Microphone start failed: " + e.message);
+      const recognizer = createRecognizer();
+      if (recognizer) {
+        recognitionRef.current = recognizer;
+        setRecognitionInstance(recognizer);
+        recognizer.start();
+        notify("🎙️ Voice Studio is listening... Speak your meeting notes & tasks naturally.");
+      }
+    } catch (err: any) {
+      console.warn("Recognizer start failed:", err);
+      notify("Could not initialize microphone. Please check browser permissions.");
     }
   }
 
   function stopVoiceRecording(autoExtract: boolean = false) {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-    }
+    isExplicitlyRecordingRef.current = false;
     setIsRecording(false);
+
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    if (mediaStreamRef.current) {
+      try { mediaStreamRef.current.getTracks().forEach((track: any) => track.stop()); } catch {}
+    }
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch {}
+    }
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+    setAudioLevel(0);
 
     const captured = (transcriptRef.current || voiceTranscript).trim();
     if (captured) {
       const autoTitle = "Voice Memo (" + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")";
       setUploadTitle((prev) => (!prev || prev === "Meeting notes") ? autoTitle : prev);
-      
-      const fullContent = initialUploadTextRef.current.trim()
-        ? `${initialUploadTextRef.current.trim()}\n${captured}`
-        : captured;
-      setUploadText(fullContent);
+      setUploadText(captured);
 
       if (autoExtract) {
-        setShowIngest(false);
-        notify("🎙️ Voice memo captured! Analyzing tasks now...");
-        executeIngest(autoTitle, fullContent);
+        setVoiceStudioOpen(false);
+        notify("🎙️ Voice memo saved! Analyzing tasks now...");
+        executeIngest(autoTitle, captured);
       } else {
+        setVoiceStudioOpen(false);
         setShowIngest(true);
         notify("🎙️ Voice transcription captured into notes! Click 'Analyze source' to extract tasks.");
       }
     } else {
       if (!uploadText.trim()) {
         const fallbackText =
-          "Meeting with Client: Priya must send the revised launch plan by 2026-11-06. Updated note confirmed Nov 6th as the final deadline.";
+          "Action: Priya must send the revised launch plan by 2026-11-06. Alex has to update the deployment script by Friday.";
         setUploadTitle("Voice Memo (Sample)");
         setUploadText(fallbackText);
-        setShowIngest(true);
-        notify("No spoken audio captured. Loaded voice action item template into notes.");
+        setVoiceTranscript(fallbackText);
+        setVoiceWordsCount(fallbackText.split(/\s+/).filter(Boolean).length);
+        notify("No spoken audio captured. Loaded sample voice action item memo.");
       } else {
         notify("Voice recording ended.");
       }
     }
+  }
+
+  function loadDemoVoiceMemo(type: "launch" | "incident" | "strategy") {
+    let text = "";
+    if (type === "launch") {
+      text = "Action: Priya must send the revised marketing deck and launch plan by 2026-11-06. Alex has to verify the database indexes before deployment.";
+    } else if (type === "incident") {
+      text = "Urgent: Team must revoke compromised API credentials immediately. Security review meeting scheduled for 2026-11-04 by Alex.";
+    } else {
+      text = "Executive Strategy: Sarah to finalize Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.";
+    }
+    transcriptRef.current = text;
+    setVoiceTranscript(text);
+    setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
+    setUploadText(text);
+    notify("Loaded pitch scenario into Voice Studio!");
   }
 
   // Feature 2: 1-Click Demo Preset Loader
@@ -1617,6 +1701,215 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* Voice Intelligence Studio Modal */}
+      {voiceStudioOpen && (
+        <div
+          className="voice-studio-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) stopVoiceRecording(false);
+          }}
+        >
+          <div className="voice-studio-card">
+            <div className="voice-studio-header">
+              <div className="voice-studio-brand">
+                <div className={"voice-mic-orb" + (isRecording ? " active" : "")}>
+                  <Mic size={18} />
+                </div>
+                <div>
+                  <b style={{ fontSize: 14, color: "var(--text-primary)", display: "block" }}>
+                    Voice Intelligence Studio
+                  </b>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    Real-time speech-to-intent analysis & evidence extraction
+                  </span>
+                </div>
+              </div>
+              <button
+                className="iconbtn"
+                onClick={() => stopVoiceRecording(false)}
+                title="Close Studio"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="voice-studio-body">
+              {/* Telemetry Bar */}
+              <div className="voice-telemetry-row">
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: 700,
+                      color: isRecording ? "var(--danger)" : "var(--text-muted)",
+                      fontSize: 11,
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: isRecording ? "var(--danger)" : "var(--text-muted)",
+                        boxShadow: isRecording ? "0 0 8px rgba(239, 68, 68, 0.7)" : "none",
+                      }}
+                    />
+                    {isRecording ? "LISTENING (CONTINUOUS)" : "RECORDING PAUSED"}
+                  </span>
+                  <span style={{ color: "var(--border-card)" }}>|</span>
+                  <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                    <Clock3 size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} />
+                    {Math.floor(recordingSeconds / 60)}:{(recordingSeconds % 60).toString().padStart(2, "0")}s
+                  </span>
+                  <span style={{ color: "var(--border-card)" }}>|</span>
+                  <span style={{ color: "var(--text-secondary)" }}>
+                    <b>{voiceWordsCount}</b> words spoken
+                  </span>
+                </div>
+
+                <div className="voice-meter-wrap" title="Microphone Input Level">
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Mic Level</span>
+                  <div className="voice-meter-track">
+                    <div
+                      className="voice-meter-fill"
+                      style={{ width: `${Math.max(8, isRecording ? audioLevel : 0)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Canvas */}
+              <div className="voice-transcript-canvas">
+                {voiceTranscript ? (
+                  <div>
+                    <span>{voiceTranscript}</span>
+                    {isRecording && <span className="voice-pulse-cursor" />}
+                  </div>
+                ) : (
+                  <div className="voice-empty-prompt">
+                    <p>
+                      🎙️ <b>Start speaking naturally into your microphone...</b>
+                      <br />
+                      Mention action items, deadlines, assignees, or project requirements.
+                    </p>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      Quick pitch samples (click to test immediately):
+                      <div className="voice-sample-chips">
+                        <button
+                          type="button"
+                          className="voice-chip"
+                          onClick={() => loadDemoVoiceMemo("launch")}
+                        >
+                          🚀 Launch Sync (Priya deadline & review)
+                        </button>
+                        <button
+                          type="button"
+                          className="voice-chip"
+                          onClick={() => loadDemoVoiceMemo("incident")}
+                        >
+                          🚨 Security Incident (Alex API revoke)
+                        </button>
+                        <button
+                          type="button"
+                          className="voice-chip"
+                          onClick={() => loadDemoVoiceMemo("strategy")}
+                        >
+                          📊 Strategy Offsite (Sarah RFP milestones)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Detected Action Indicator */}
+              {voiceTranscript && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "8px 12px",
+                    background: "var(--primary-subtle)",
+                    border: "1px solid var(--primary-border)",
+                    borderRadius: "var(--radius-md)",
+                    fontSize: 12,
+                    color: "var(--primary)",
+                  }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                    <Sparkles size={14} /> AI Ready: Evidence-linked extraction will parse actions & assignees
+                  </span>
+                  <span style={{ fontSize: 11, opacity: 0.85 }}>Human approval gate active</span>
+                </div>
+              )}
+            </div>
+
+            <div className="voice-studio-foot">
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {isRecording ? (
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      isExplicitlyRecordingRef.current = false;
+                      setIsRecording(false);
+                      if (recognitionRef.current) try { recognitionRef.current.stop(); } catch {}
+                    }}
+                  >
+                    <MicOff size={14} /> Pause
+                  </button>
+                ) : (
+                  <button className="btn" onClick={startVoiceRecording}>
+                    <Mic size={14} /> Resume
+                  </button>
+                )}
+                <button
+                  className="btn"
+                  onClick={() => {
+                    accumulatedTranscriptRef.current = "";
+                    transcriptRef.current = "";
+                    setVoiceTranscript("");
+                    setVoiceWordsCount(0);
+                    setRecordingSeconds(0);
+                    notify("Transcript reset.");
+                  }}
+                >
+                  <RefreshCw size={13} /> Clear
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <button
+                  className="btn"
+                  onClick={() => stopVoiceRecording(false)}
+                  disabled={!voiceTranscript.trim()}
+                  title="Open this note in the standard editor"
+                >
+                  📝 Open in Editor
+                </button>
+                <button
+                  className="primary"
+                  onClick={() => stopVoiceRecording(true)}
+                  disabled={!voiceTranscript.trim() || loading}
+                  style={{ minWidth: 170 }}
+                >
+                  {loading ? (
+                    <LoaderCircle className="spin" size={15} />
+                  ) : (
+                    <>
+                      <Sparkles size={15} /> Stop & Extract Tasks
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Ingest text or file */}
       {showIngest && (
