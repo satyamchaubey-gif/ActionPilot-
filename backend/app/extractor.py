@@ -3,9 +3,16 @@ from datetime import datetime, date
 import httpx
 from .schemas import ExtractionResult, TaskProposal, Evidence
 
-ACTION_RE = re.compile(r"\b(need to|needs to|must|should|will|please|action:|follow up|prepare|send|review|complete|deliver|finalize|confirm|share|update|submit|schedule|create|build|publish|resolve)\b", re.I)
+ACTION_RE = re.compile(
+    r"\b(need to|needs to|have to|has to|must|should|will|please|action:|todo:|task:|follow up|prepare|send|review|complete|deliver|finalize|confirm|share|update|submit|schedule|create|build|publish|resolve|deploy|fix|check|call|reach out|organize|implement|test|handle|assign|write)\b",
+    re.I
+)
 DATE_RE = re.compile(r"\b(?:20\d{2}-\d{2}-\d{2}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+20\d{2})?)\b", re.I)
 OWNER_RE = re.compile(r"\b(?:owner|assignee|assigned to|responsible:?)\s+([A-Z][\w.-]*(?:\s+[A-Z][\w.-]*){0,2})", re.I)
+SUBJECT_OWNER_RE = re.compile(
+    r"(?:^|[:;•\-]\s*|\b(?:action|todo|task):\s*)([A-Z][a-z]+)\s+(?:must|should|will|needs to|has to|is assigned to|is responsible for)\b",
+    re.I
+)
 
 def parse_date(s):
     for fmt in ("%Y-%m-%d", "%d %B %Y", "%d %b %Y", "%d %B", "%d %b"):
@@ -18,9 +25,10 @@ def parse_date(s):
 
 def local_extract(text, source_name):
     tasks, seen = [], set()
-    lines = [x.strip(" \t-*•") for x in re.split(r"[\n\r]+|(?<=[.!?])\s+(?=[A-Z])", text) if x.strip()]
+    split_pattern = r"[\n\r]+|(?<=[.!?])\s+|(?<=[a-z0-9])\s+(?=(?:action|todo|task):\s*|[A-Z][a-z]+\s+(?:must|should|needs to|has to|will)\b)|\s+(?:also|additionally|and then)\s+|\s+(?:and\s+)?(?=please\b)"
+    lines = [x.strip(" \t-*•") for x in re.split(split_pattern, text, flags=re.I) if x.strip()]
     for line in lines:
-        if not ACTION_RE.search(line) or len(line) < 12: continue
+        if not ACTION_RE.search(line) or len(line) < 10: continue
         normalized = re.sub(r"\s+", " ", line).strip()
         if normalized.lower() in seen: continue
         seen.add(normalized.lower())
@@ -28,6 +36,9 @@ def local_extract(text, source_name):
         due = parse_date(dates[-1]) if dates else None
         om = OWNER_RE.search(normalized)
         owner = om.group(1).strip() if om else None
+        if not owner:
+            sm = SUBJECT_OWNER_RE.search(normalized)
+            owner = sm.group(1).strip() if sm else None
         low = normalized.lower()
         priority = "urgent" if any(w in low for w in ("urgent","asap","immediately","critical")) else ("high" if any(w in low for w in ("high priority","must","blocker")) else "medium")
         flags = []

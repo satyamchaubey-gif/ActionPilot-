@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -38,6 +38,7 @@ import {
   Radio,
   Sun,
   Moon,
+  Menu,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -114,6 +115,9 @@ export default function App() {
     setTheme((t) => (t === "dark" ? "light" : "dark"));
   }
 
+  // Mobile Navigation Drawer State
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   // Authentication State
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("actionpilot_token"));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -154,6 +158,9 @@ export default function App() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [recognitionInstance, setRecognitionInstance] = useState<any>(null);
+  const transcriptRef = useRef("");
+  const recognitionRef = useRef<any>(null);
+  const initialUploadTextRef = useRef("");
 
   // Feature 2: 1-Click Demo Presets
   const [showDemoMenu, setShowDemoMenu] = useState(false);
@@ -270,6 +277,30 @@ export default function App() {
     setTimeout(() => setToast(""), 3500);
   }
 
+  // Workspace text analysis helper
+  async function executeIngest(customTitle?: string, customText?: string) {
+    const textToIngest = (customText !== undefined ? customText : uploadText).trim();
+    const titleToIngest = (customTitle !== undefined ? customTitle : uploadTitle).trim() || "Meeting notes";
+    if (!textToIngest) return;
+    setLoading(true);
+    try {
+      const r = await req("/api/documents/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: titleToIngest, text: textToIngest }),
+      });
+      await refresh();
+      setShowIngest(false);
+      setUploadText("");
+      setActive("tasks");
+      notify(r.duplicate ? "Duplicate note detected — existing tasks displayed in workspace." : "🎙️ Voice memo analyzed and evidence-linked tasks extracted!");
+    } catch (e: any) {
+      setError(e.message || "Failed to analyze document");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   // Feature 1: Live Voice Recording Handlers
   function startVoiceRecording() {
     const SpeechRecognition =
@@ -281,31 +312,47 @@ export default function App() {
       setUploadTitle("Voice Memo (Transcription)");
       setUploadText(fallbackText);
       setShowIngest(true);
-      notify("Browser Web Speech API not detected — loaded voice transcription template!");
+      notify("Browser Web Speech API not detected — loaded voice transcription template into notes!");
       return;
     }
     try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+      }
+
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = "en-US";
 
-      let finalSpeech = "";
+      initialUploadTextRef.current = uploadText;
+      transcriptRef.current = "";
+      setVoiceTranscript("");
+      setRecordingSeconds(0);
+      setIsRecording(true);
+
       recognition.onresult = (event: any) => {
-        let interim = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalSpeech += event.results[i][0].transcript + " ";
-          } else {
-            interim += event.results[i][0].transcript;
-          }
+        let fullTranscript = "";
+        for (let i = 0; i < event.results.length; ++i) {
+          fullTranscript += event.results[i][0].transcript + " ";
         }
-        setVoiceTranscript((finalSpeech || interim).trim());
+        const clean = fullTranscript.trim();
+        transcriptRef.current = clean;
+        setVoiceTranscript(clean);
+
+        // LIVE STREAM DIRECTLY INTO uploadText!
+        const combined = initialUploadTextRef.current.trim()
+          ? `${initialUploadTextRef.current.trim()}\n${clean}`
+          : clean;
+        setUploadText(combined);
       };
 
       recognition.onerror = (e: any) => {
         console.error("Speech error", e);
         setIsRecording(false);
+        if (e.error === "not-allowed") {
+          notify("Microphone permission denied. Please allow microphone access in your browser.");
+        }
       };
 
       recognition.onend = () => {
@@ -313,28 +360,52 @@ export default function App() {
       };
 
       recognition.start();
+      recognitionRef.current = recognition;
       setRecognitionInstance(recognition);
-      setIsRecording(true);
-      setVoiceTranscript("");
-      setRecordingSeconds(0);
-      notify("🎙️ Recording started! Speak your meeting action items...");
+      notify("🎙️ Listening... Speak naturally! Speech streams directly into notes.");
     } catch (e: any) {
-      notify("Microphone access failed: " + e.message);
+      setIsRecording(false);
+      notify("Microphone start failed: " + e.message);
     }
   }
 
-  function stopVoiceRecording() {
-    if (recognitionInstance) {
+  function stopVoiceRecording(autoExtract: boolean = false) {
+    if (recognitionRef.current) {
       try {
-        recognitionInstance.stop();
+        recognitionRef.current.stop();
       } catch {}
     }
     setIsRecording(false);
-    if (voiceTranscript.trim()) {
-      setUploadTitle("Recorded Voice Meeting Note");
-      setUploadText(voiceTranscript.trim());
-      setShowIngest(true);
-      notify("Transcription ready! Click 'Analyze source' to extract tasks.");
+
+    const captured = (transcriptRef.current || voiceTranscript).trim();
+    if (captured) {
+      const autoTitle = "Voice Memo (" + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")";
+      setUploadTitle((prev) => (!prev || prev === "Meeting notes") ? autoTitle : prev);
+      
+      const fullContent = initialUploadTextRef.current.trim()
+        ? `${initialUploadTextRef.current.trim()}\n${captured}`
+        : captured;
+      setUploadText(fullContent);
+
+      if (autoExtract) {
+        setShowIngest(false);
+        notify("🎙️ Voice memo captured! Analyzing tasks now...");
+        executeIngest(autoTitle, fullContent);
+      } else {
+        setShowIngest(true);
+        notify("🎙️ Voice transcription captured into notes! Click 'Analyze source' to extract tasks.");
+      }
+    } else {
+      if (!uploadText.trim()) {
+        const fallbackText =
+          "Meeting with Client: Priya must send the revised launch plan by 2026-11-06. Updated note confirmed Nov 6th as the final deadline.";
+        setUploadTitle("Voice Memo (Sample)");
+        setUploadText(fallbackText);
+        setShowIngest(true);
+        notify("No spoken audio captured. Loaded voice action item template into notes.");
+      } else {
+        notify("Voice recording ended.");
+      }
     }
   }
 
@@ -589,24 +660,7 @@ export default function App() {
 
   // Workspace actions
   async function ingestText() {
-    if (!uploadText.trim()) return;
-    setLoading(true);
-    try {
-      const r = await req("/api/documents/text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: uploadTitle, text: uploadText }),
-      });
-      await refresh();
-      setShowIngest(false);
-      setUploadText("");
-      setActive("tasks");
-      notify(r.duplicate ? "Duplicate document skipped" : "Document analyzed and tasks extracted");
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+    await executeIngest();
   }
 
   async function ingestFile(file?: File) {
@@ -984,15 +1038,31 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {/* Mobile Navigation Drawer Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="mobile-nav-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={"sidebar " + (mobileMenuOpen ? "mobile-open" : "")}>
         <div className="brand">
           <div className="brandmark">
-            <Workflow />
+            <Workflow size={20} />
           </div>
           <div>
             <b>actionpilot</b>
             <small>WORKFLOW INTELLIGENCE</small>
           </div>
+          <button
+            className="mobile-close-btn"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <div className="workspace">
@@ -1016,7 +1086,10 @@ export default function App() {
           <button
             key={id}
             className={"navitem " + (active === id ? "active" : "")}
-            onClick={() => setActive(id)}
+            onClick={() => {
+              setActive(id);
+              setMobileMenuOpen(false);
+            }}
           >
             <Icon size={17} />
             {label}
@@ -1034,7 +1107,7 @@ export default function App() {
         </div>
 
         <div className="sidefoot">
-          <ShieldCheck />
+          <ShieldCheck size={20} />
           <div>
             <b>Human control enabled</b>
             <p>Actions require approval. External actions are gated.</p>
@@ -1060,26 +1133,35 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          <div>
-            Workspace <span>/</span>{" "}
-            <b>
-              {
-                (
-                  {
-                    overview: "Overview",
-                    tasks: "Task review",
-                    documents: "Source documents",
-                    audit: "Audit trail",
-                  } as any
-                )[active]
-              }
-            </b>
+          <div className="topbar-left">
+            <button
+              className="mobile-menu-btn"
+              onClick={() => setMobileMenuOpen(true)}
+              aria-label="Open navigation menu"
+            >
+              <Menu size={18} />
+            </button>
+            <div className="breadcrumb">
+              Workspace <span>/</span>{" "}
+              <b>
+                {
+                  (
+                    {
+                      overview: "Overview",
+                      tasks: "Task review",
+                      documents: "Source documents",
+                      audit: "Audit trail",
+                    } as any
+                  )[active]
+                }
+              </b>
+            </div>
           </div>
 
           <div className="topright">
             {/* Feature 1: Live Voice Recording Mic Button in Topbar */}
             {isRecording ? (
-              <button className="voice-record-btn recording" onClick={stopVoiceRecording}>
+              <button className="voice-record-btn recording" onClick={() => stopVoiceRecording(true)}>
                 <div className="voice-bars">
                   <div className="voice-bar" />
                   <div className="voice-bar" />
@@ -1156,8 +1238,8 @@ export default function App() {
               )}
             </div>
 
-            <span className="user-badge-top">
-              <ShieldCheck size={12} /> {currentUser.email}
+            <span className="user-badge-top" title={currentUser.email}>
+              <ShieldCheck size={14} /> <span className="email-text">{currentUser.email}</span>
             </span>
             <span className="env">
               <i /> LOCAL ENVIRONMENT
@@ -1193,29 +1275,29 @@ export default function App() {
               <div className="heading">
                 <div>
                   <div className="eyebrow">
-                    <Sparkles size={14} /> EVIDENCE-DRIVEN AUTOMATION
+                    <Sparkles size={13} /> EVIDENCE-DRIVEN WORKFLOW INTELLIGENCE
                   </div>
                   <h1>Good morning, {currentUser.full_name || currentUser.email.split("@")[0]}.</h1>
-                  <p>Turn unstructured voice & notes into verified, human-approved work.</p>
+                  <p>Transform unstructured voice notes, emails & documents into verified, human-governed work.</p>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button className="secondary" onClick={startVoiceRecording}>
                     <Mic size={15} /> Voice memo
                   </button>
                   <button className="primary" onClick={() => setShowIngest(true)}>
-                    <Plus size={17} /> New workflow
+                    <Plus size={16} /> New workflow
                   </button>
                 </div>
               </div>
 
               <div className="trustbanner">
                 <div className="trusticon">
-                  <ShieldCheck size={24} />
+                  <ShieldCheck size={22} />
                 </div>
                 <div>
-                  <b>Trust every action with evidence.</b>
+                  <b>Evidence-Backed Automation & Human Governance</b>
                   <p>
-                    Every proposal links to its source text, flags uncertainty, and allows 1-click external dispatch after approval.
+                    Every proposal is anchored to source document citations with confidence scoring. Actions remain gated until explicitly approved by a human operator.
                   </p>
                 </div>
                 <span>● APPROVAL GATE ACTIVE</span>
@@ -1231,10 +1313,10 @@ export default function App() {
 
               <div className="stats">
                 {[
-                  [FileText, "Source documents", docs.length, "Ingested and indexed", "blue"],
-                  [ListTodo, "Proposed tasks", proposed, "Awaiting your review", "purple"],
-                  [AlertTriangle, "Items flagged", flagged, "Need attention", "amber"],
-                  [CheckCheck, "Approved tasks", approved, "Ready for dispatch", "green"],
+                  [FileText, "Source documents", docs.length, "Ingested & indexed", "blue"],
+                  [ListTodo, "Proposed tasks", proposed, "Awaiting human review", "purple"],
+                  [AlertTriangle, "Items flagged", flagged, "Discrepancies & missing fields", "amber"],
+                  [CheckCheck, "Approved tasks", approved, "Ready for external dispatch", "green"],
                 ].map(([I, l, v, h, t]: any) => (
                   <div className="stat" key={l}>
                     <div className={"staticon " + t}>
@@ -1252,16 +1334,44 @@ export default function App() {
                   <div className="panelhead">
                     <div>
                       <h3>Processing pipeline</h3>
-                      <p>From source material to dispatched action</p>
+                      <p>From unstructured source material to verified external action</p>
                     </div>
-                    <Badge tone="blue">LIVE SYSTEM</Badge>
+                    <Badge tone="blue">PIPELINE ACTIVE</Badge>
                   </div>
                   {[
-                    ["01", FileText, "Ingest source", "Text, Audio memos, and PDF documents", docs.length ? "Complete" : "Ready"],
-                    ["02", Sparkles, "Extract & validate", "Schema-checked task proposals", docs.length ? "Complete" : "Waiting"],
-                    ["03", AlertTriangle, "Verify evidence & resolve", "Interactive conflict resolution & excerpts", flagged ? flagged + " flagged" : "Ready"],
-                    ["04", ShieldCheck, "Human approval & dispatch", "1-click Google Calendar / Slack dispatch", proposed ? proposed + " pending" : "Ready"],
-                  ].map(([n, I, t, s, state]: any, i) => (
+                    [
+                      "01",
+                      FileText,
+                      "Ingest source",
+                      "Text notes, audio memos, and PDF documents",
+                      docs.length ? "Completed" : "Ready",
+                      docs.length ? "done" : "",
+                    ],
+                    [
+                      "02",
+                      Sparkles,
+                      "Extract & validate",
+                      "Schema-checked task proposals & uncertainty detection",
+                      docs.length ? "Completed" : "Waiting",
+                      docs.length ? "done" : "",
+                    ],
+                    [
+                      "03",
+                      AlertTriangle,
+                      "Review & resolve",
+                      "Side-by-side evidence inspection & discrepancy diffing",
+                      flagged ? `${flagged} flagged` : proposed ? `${proposed} pending` : "Ready",
+                      flagged ? "warn" : proposed ? "info" : "",
+                    ],
+                    [
+                      "04",
+                      ShieldCheck,
+                      "Human approval & dispatch",
+                      "1-click Google Calendar, Slack, GitHub, or Email dispatch",
+                      approved ? `${approved} ready` : "Standing by",
+                      approved ? "done" : "",
+                    ],
+                  ].map(([n, I, t, s, state, tone]: any, i) => (
                     <div className="pipe" key={n}>
                       <div className={"pipeicon p" + i}>
                         <I size={17} />
@@ -1270,7 +1380,7 @@ export default function App() {
                         <b>{t}</b>
                         <small>{s}</small>
                       </div>
-                      <span>{state}</span>
+                      <span className={"pipe-status " + tone}>{state}</span>
                       <em>{n}</em>
                     </div>
                   ))}
@@ -1283,7 +1393,7 @@ export default function App() {
                   <div className="panelhead">
                     <div>
                       <h3>Recent task proposals</h3>
-                      <p>Latest items requiring attention</p>
+                      <p>Action items requiring validation or dispatch</p>
                     </div>
                     <button className="subtle" onClick={() => setActive("tasks")}>
                       View all ↗
@@ -1308,10 +1418,13 @@ export default function App() {
                   ))}
                   {!tasks.length && (
                     <Empty
-                      title="Nothing here yet"
-                      text="Click 'Load Demo Scenario' or record a voice note to start."
-                      action={() => handleLoadDemo("product_launch")}
-                      btnText="⚡ Load Demo Scenario"
+                      title="No task proposals yet"
+                      text="Ingest meeting notes, voice memos, or load a sample scenario to test evidence-backed task extraction."
+                      action={() => setShowIngest(true)}
+                      btnText="Ingest Document"
+                      secondaryAction={() => handleLoadDemo("product_launch")}
+                      secondaryBtnText="Load Sample Scenario"
+                      icon={ListTodo}
                     />
                   )}
                 </section>
@@ -1530,8 +1643,8 @@ export default function App() {
             {/* Mic / Voice Recording Quick Trigger inside Modal */}
             <div
               style={{
-                background: "#0f172a",
-                border: "1px solid #1e293b",
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--border-card)",
                 borderRadius: 10,
                 padding: 14,
                 marginBottom: 16,
@@ -1541,13 +1654,13 @@ export default function App() {
               }}
             >
               <div>
-                <b style={{ color: "#f8fafc", fontSize: 13, fontWeight: 600 }}>🎙️ Voice Meeting Note</b>
-                <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>
-                  Record a voice memo directly in your browser
+                <b style={{ color: "var(--text-primary)", fontSize: 13, fontWeight: 600 }}>🎙️ Voice Meeting Note</b>
+                <p style={{ color: "var(--text-secondary)", fontSize: 12, margin: "2px 0 0" }}>
+                  Record a voice memo directly — speech streams into the notes box in real time
                 </p>
               </div>
               {isRecording ? (
-                <button className="voice-record-btn recording" onClick={stopVoiceRecording}>
+                <button className="voice-record-btn recording" onClick={() => stopVoiceRecording(false)}>
                   <MicOff size={14} /> Stop ({recordingSeconds}s)
                 </button>
               ) : (
@@ -1558,11 +1671,52 @@ export default function App() {
             </div>
 
             {voiceTranscript && (
-              <div className="voice-transcript-card">
-                <span style={{ fontSize: 11, color: "#60a5fa", fontWeight: 700, display: "block", marginBottom: 4, letterSpacing: "0.04em" }}>
-                  ● LIVE TRANSCRIPT:
-                </span>
-                {voiceTranscript}
+              <div className="voice-transcript-card" style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, color: "var(--info)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6, letterSpacing: "0.04em" }}>
+                    ● {isRecording ? "LIVE TRANSCRIPTION (STREAMING TO NOTES)..." : "TRANSCRIPTION CAPTURED"}
+                  </span>
+                  {!isRecording && (
+                    <span style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>
+                      ✓ Added to notes box below
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-primary)" }}>
+                  {voiceTranscript}
+                </div>
+                {!isRecording && (
+                  <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ fontSize: 12, padding: "5px 12px", height: "auto" }}
+                      onClick={() => {
+                        setUploadText(voiceTranscript);
+                        notify("Spoken text copied into notes box below.");
+                      }}
+                    >
+                      🔄 Re-insert to notes box
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{
+                        fontSize: 12,
+                        padding: "5px 14px",
+                        height: "auto",
+                        background: "var(--primary-subtle)",
+                        color: "var(--primary)",
+                        borderColor: "var(--primary-border)",
+                        fontWeight: 600,
+                      }}
+                      disabled={loading}
+                      onClick={() => executeIngest(uploadTitle, uploadText || voiceTranscript)}
+                    >
+                      <Sparkles size={13} style={{ marginRight: 4 }} /> ⚡ Analyze Voice Note Now
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2136,22 +2290,37 @@ function Empty({
   text,
   action,
   btnText = "Add source",
+  secondaryAction,
+  secondaryBtnText,
+  icon: Icon = Inbox,
 }: {
   title: string;
   text: string;
   action?: () => void;
   btnText?: string;
+  secondaryAction?: () => void;
+  secondaryBtnText?: string;
+  icon?: any;
 }) {
   return (
     <div className="empty">
-      <Inbox size={25} />
+      <div className="empty-icon-wrap">
+        <Icon size={24} />
+      </div>
       <b>{title}</b>
       <p>{text}</p>
-      {action && (
-        <button className="secondary" onClick={action}>
-          {btnText}
-        </button>
-      )}
+      <div className="empty-actions">
+        {action && (
+          <button className="primary" onClick={action}>
+            <Plus size={14} /> {btnText}
+          </button>
+        )}
+        {secondaryAction && (
+          <button className="secondary" onClick={secondaryAction}>
+            <Zap size={14} /> {secondaryBtnText}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
