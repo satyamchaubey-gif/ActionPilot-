@@ -1172,7 +1172,6 @@ export default function App() {
           ["overview", LayoutDashboard, "Overview"],
           ["tasks", ListTodo, "Task review"],
           ["documents", FileText, "Source documents"],
-          ["audit", History, "Audit trail"],
         ].map(([id, Icon, label]: any) => (
           <button
             key={id}
@@ -1187,23 +1186,6 @@ export default function App() {
             {id === "tasks" && proposed > 0 && <span className="navcount">{proposed}</span>}
           </button>
         ))}
-
-        <div className="navlabel">SYSTEM</div>
-        <div className="sys">
-          <span className={"dot " + (health === "ok" ? "online" : "")} />
-          <div>
-            <b>API status</b>
-            <small>{health === "ok" ? "Connected" : health === "checking" ? "Checking" : "Offline"}</small>
-          </div>
-        </div>
-
-        <div className="sidefoot">
-          <ShieldCheck size={20} />
-          <div>
-            <b>Human control enabled</b>
-            <p>Actions require approval. External actions are gated.</p>
-          </div>
-        </div>
 
         {/* User Profile Card with Logout */}
         <div className="profile">
@@ -1250,7 +1232,7 @@ export default function App() {
           </div>
 
           <div className="topright">
-            {/* Feature 1: Live Voice Recording Mic Button in Topbar */}
+            {/* Live Voice Recording Mic Button in Topbar */}
             {isRecording ? (
               <button className="voice-record-btn recording" onClick={() => stopVoiceRecording(true)}>
                 <div className="voice-bars">
@@ -1269,71 +1251,8 @@ export default function App() {
               </button>
             )}
 
-            {/* Feature 2: 1-Click Demo Scenario Dropdown */}
-            <div style={{ position: "relative" }}>
-              <button
-                className="demo-preset-btn"
-                onClick={() => setShowDemoMenu(!showDemoMenu)}
-                title="Load Realistic Scenarios"
-              >
-                <Zap size={13} /> Sample Scenarios ▾
-              </button>
-              {showDemoMenu && (
-                <div className="demo-dropdown">
-                  <button
-                    className="demo-item"
-                    onClick={() => {
-                      handleLoadDemo("product_launch");
-                      setShowDemoMenu(false);
-                    }}
-                  >
-                    <div className="pipeicon p0" style={{ width: 28, height: 28, flexShrink: 0 }}>
-                      <Workflow size={14} />
-                    </div>
-                    <div>
-                      <b>Product Launch Sync</b>
-                      <small>Deadline conflict resolution (Nov 2 vs Nov 6)</small>
-                    </div>
-                  </button>
-                  <button
-                    className="demo-item"
-                    onClick={() => {
-                      handleLoadDemo("security_incident");
-                      setShowDemoMenu(false);
-                    }}
-                  >
-                    <div className="pipeicon p2" style={{ width: 28, height: 28, flexShrink: 0 }}>
-                      <AlertTriangle size={14} />
-                    </div>
-                    <div>
-                      <b>Security Incident Response</b>
-                      <small>API credential leak triage & unassigned owners</small>
-                    </div>
-                  </button>
-                  <button
-                    className="demo-item"
-                    onClick={() => {
-                      handleLoadDemo("exec_offsite");
-                      setShowDemoMenu(false);
-                    }}
-                  >
-                    <div className="pipeicon p3" style={{ width: 28, height: 28, flexShrink: 0 }}>
-                      <FileText size={14} />
-                    </div>
-                    <div>
-                      <b>Executive Strategy Offsite</b>
-                      <small>Budget signoffs & vendor RFP milestones</small>
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
-
             <span className="user-badge-top" title={currentUser.email}>
               <ShieldCheck size={14} /> <span className="email-text">{currentUser.email}</span>
-            </span>
-            <span className="env">
-              <i /> LOCAL ENVIRONMENT
             </span>
             <button
               className="iconbtn"
@@ -1342,9 +1261,6 @@ export default function App() {
               aria-label="Toggle color theme"
             >
               {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-            </button>
-            <button className="iconbtn" onClick={refresh} title="Refresh">
-              <RefreshCw size={16} />
             </button>
           </div>
         </header>
@@ -1510,31 +1426,14 @@ export default function App() {
                   {!tasks.length && (
                     <Empty
                       title="No task proposals yet"
-                      text="Ingest meeting notes, voice memos, or load a sample scenario to test evidence-backed task extraction."
+                      text="Ingest meeting notes, voice memos, or documents to test evidence-backed task extraction."
                       action={() => setShowIngest(true)}
                       btnText="Ingest Document"
-                      secondaryAction={() => handleLoadDemo("product_launch")}
-                      secondaryBtnText="Load Sample Scenario"
                       icon={ListTodo}
                     />
                   )}
                 </section>
               </div>
-
-              <section className="panel">
-                <div className="panelhead">
-                  <div>
-                    <h3>Recent audit events</h3>
-                    <p>Every extraction, conflict resolution, and dispatch is immutably recorded</p>
-                  </div>
-                  <button className="subtle" onClick={() => setActive("audit")}>
-                    Open audit trail ↗
-                  </button>
-                </div>
-                {audit.slice(0, 4).map((a) => (
-                  <AuditRow key={a.id} a={a} />
-                ))}
-              </section>
             </>
           )}
 
@@ -1549,9 +1448,6 @@ export default function App() {
                   <p>Validate evidence, resolve conflicts with AI, and dispatch approved actions.</p>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button className="secondary" onClick={() => handleLoadDemo("product_launch")}>
-                    <Zap size={14} /> Load Demo
-                  </button>
                   <button className="primary" onClick={() => setShowIngest(true)}>
                     <Plus size={17} /> New workflow
                   </button>
@@ -1612,9 +1508,9 @@ export default function App() {
               {!visible.length && (
                 <Empty
                   title="No matching tasks"
-                  text="Load a demo scenario to see evidence linking and conflict resolution in action."
-                  action={() => handleLoadDemo("product_launch")}
-                  btnText="⚡ Load Demo Scenario"
+                  text="Extract tasks from notes, emails, or documents to review them here."
+                  action={() => setShowIngest(true)}
+                  btnText="New workflow"
                 />
               )}
             </>
