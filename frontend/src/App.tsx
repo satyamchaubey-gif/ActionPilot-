@@ -49,6 +49,8 @@ import {
   Trash2,
   Volume2,
   Monitor,
+  Download,
+  Headphones,
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -70,6 +72,97 @@ function getGreeting(): string {
   if (hour >= 12 && hour < 17) return "Good afternoon";
   if (hour >= 17 && hour < 23) return "Good evening";
   return "Welcome back";
+}
+
+// Hinglish & Multilingual Speech Optimization Helpers
+function normalizeHinglishSpoken(text: string): string {
+  if (!text) return "";
+  let clean = text;
+
+  // Capitalize common Indian names
+  const names = [
+    "Priya", "Alex", "Rahul", "Rohan", "Ananya", "Sameer",
+    "Sarah", "Sam", "Neha", "Vikram", "Amit", "Pooja", "Arjun", "Sneha"
+  ];
+  names.forEach((name) => {
+    const reg = new RegExp(`\\b${name}\\b`, "gi");
+    clean = clean.replace(reg, name);
+  });
+
+  // Common Hinglish phonetic adjustments
+  const fixes: [RegExp, string][] = [
+    [/\bkal\s*thak\b/gi, "kal tak"],
+    [/\bkal\s*thaq\b/gi, "kal tak"],
+    [/\bkardo\b/gi, "kar do"],
+    [/\bkarlena\b/gi, "kar lena"],
+    [/\bdekhlo\b/gi, "dekh lo"],
+    [/\bbhejdo\b/gi, "bhej do"],
+    [/\bkarhega\b/gi, "karega"],
+    [/\bkarhegi\b/gi, "karegi"],
+    [/\bsomvar\b/gi, "Somwar"],
+    [/\bmangalvar\b/gi, "Mangalwar"],
+    [/\bbudhvar\b/gi, "Budhwar"],
+    [/\bguruvar\b/gi, "Guruwar"],
+    [/\bshukravar\b/gi, "Shukrawar"],
+    [/\bshanivar\b/gi, "Shaniwar"],
+    [/\bravivar\b/gi, "Ravivar"],
+  ];
+  fixes.forEach(([pat, rep]) => {
+    clean = clean.replace(pat, rep);
+  });
+
+  return clean;
+}
+
+function devanagariToHinglish(text: string): string {
+  if (!text) return "";
+  const VOWELS: Record<string, string> = {
+    "अ": "a", "आ": "aa", "इ": "i", "ई": "ee", "उ": "u", "ऊ": "oo",
+    "ए": "e", "ऐ": "ai", "ओ": "o", "औ": "au", "ऋ": "ri"
+  };
+  const MATRAS: Record<string, string> = {
+    "ा": "aa", "ि": "i", "ी": "ee", "ु": "u", "ू": "oo", "े": "e",
+    "ै": "ai", "ो": "o", "ौ": "au", "ृ": "ri", "ं": "n", "ँ": "n", "ः": "h"
+  };
+  const CONSONANTS: Record<string, string> = {
+    "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "ng",
+    "च": "ch", "छ": "chh", "ज": "j", "झ": "jh", "ञ": "ny",
+    "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "ण": "n",
+    "त": "t", "थ": "th", "द": "d", "ध": "dh", "न": "n",
+    "प": "p", "फ": "f", "ब": "b", "भ": "bh", "म": "m",
+    "य": "y", "र": "r", "ल": "l", "व": "v",
+    "श": "sh", "ष": "sh", "स": "s", "ह": "h",
+    "क़": "q", "ख़": "kh", "ग़": "gh", "ज़": "z", "ड़": "r", "ढ़": "rh", "फ़": "f"
+  };
+
+  let res = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (VOWELS[ch]) {
+      res += VOWELS[ch];
+    } else if (CONSONANTS[ch]) {
+      const c = CONSONANTS[ch];
+      if (next === "्") {
+        res += c;
+        i++;
+      } else if (MATRAS[next]) {
+        res += c + MATRAS[next];
+        i++;
+      } else if (next && CONSONANTS[next]) {
+        res += c + "a";
+      } else if (next === " " || next === undefined || /[.,!?;:\n]/.test(next)) {
+        res += c;
+      } else {
+        res += c + "a";
+      }
+    } else if (MATRAS[ch]) {
+      res += MATRAS[ch];
+    } else {
+      res += ch;
+    }
+  }
+  return normalizeHinglishSpoken(res);
 }
 
 type User = {
@@ -211,6 +304,9 @@ export default function App() {
   const [recognitionInstance, setRecognitionInstance] = useState<any>(null);
   const [voiceStudioOpen, setVoiceStudioOpen] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [speakerAudioLevel, setSpeakerAudioLevel] = useState(0);
+  const [isSpeakerConnected, setIsSpeakerConnected] = useState(false);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
   const [voiceWordsCount, setVoiceWordsCount] = useState(0);
 
   const transcriptRef = useRef("");
@@ -220,7 +316,13 @@ export default function App() {
   const accumulatedTranscriptRef = useRef("");
   const audioContextRef = useRef<any>(null);
   const analyserRef = useRef<any>(null);
+  const speakerAnalyserRef = useRef<any>(null);
+  const destinationRef = useRef<any>(null);
+  const micGainRef = useRef<any>(null);
+  const speakerGainRef = useRef<any>(null);
   const mediaStreamRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<any>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
   const animFrameRef = useRef<any>(null);
 
   // Live Speech Recognition & Accent Adaptation
@@ -503,9 +605,97 @@ export default function App() {
     if (isRecording && recognitionRef.current) {
       try {
         recognitionRef.current.stop();
-        notify(`Switched speech model to: ${newLang === "en-IN" ? "English (India)" : newLang === "hi-IN" ? "Hindi" : newLang}`);
+        const label =
+          newLang === "en-IN"
+            ? "🇮🇳 Hinglish (India / Latin script)"
+            : newLang === "hi-to-hinglish"
+            ? "🇮🇳 Hindi ➔ Roman Hinglish (Auto-transliterate)"
+            : newLang === "hi-IN"
+            ? "🇮🇳 Pure Hindi (हिन्दी लिपि)"
+            : newLang === "en-US"
+            ? "🇺🇸 English (US)"
+            : newLang;
+        notify(`Switched speech model to: ${label}`);
       } catch {}
     }
+  }
+
+  // Dual-Channel Audio Mixing: Captures system / speaker audio (incoming meeting sound) and mixes with mic
+  async function connectSpeakerAudio() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      notify("Tab/System audio capture requires Google Chrome or Microsoft Edge desktop browser.");
+      return;
+    }
+    try {
+      notify("Select your Google Meet tab or system window & make sure 'Share tab audio' or 'Also share system audio' is checked!");
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        },
+      });
+
+      const audioTracks = displayStream.getAudioTracks();
+      if (!audioTracks || audioTracks.length === 0) {
+        notify("⚠️ No audio track found from tab/window. Please ensure 'Share audio' was checked.");
+        displayStream.getTracks().forEach((t: any) => t.stop());
+        return;
+      }
+
+      displayStreamRef.current = displayStream;
+      setIsSpeakerConnected(true);
+      setAudioSourceType("tab");
+
+      if (audioContextRef.current && destinationRef.current) {
+        try {
+          const spkSrc = audioContextRef.current.createMediaStreamSource(displayStream);
+          const spkGain = audioContextRef.current.createGain();
+          spkGain.gain.value = 2.0; // Boost meeting participants sound
+          spkSrc.connect(spkGain);
+          spkGain.connect(destinationRef.current);
+          speakerGainRef.current = spkGain;
+
+          const spkAnalyser = audioContextRef.current.createAnalyser();
+          spkAnalyser.fftSize = 64;
+          spkGain.connect(spkAnalyser);
+          speakerAnalyserRef.current = spkAnalyser;
+        } catch (mixErr) {
+          console.warn("Could not mix speaker into AudioContext:", mixErr);
+        }
+      }
+
+      audioTracks[0].onended = () => {
+        setIsSpeakerConnected(false);
+        setAudioSourceType("mic");
+        speakerAnalyserRef.current = null;
+        notify("Speaker / Meeting tab audio disconnected. Reverted to microphone only.");
+      };
+
+      notify("✅ Dual Audio Active! Both your Microphone (Voice Out) AND Speaker (Meeting In) are recording together.");
+    } catch (err: any) {
+      if (err.name !== "NotAllowedError") {
+        console.warn("Speaker capture warning:", err);
+      }
+    }
+  }
+
+  function disconnectSpeakerAudio() {
+    if (displayStreamRef.current) {
+      try {
+        displayStreamRef.current.getTracks().forEach((t: any) => t.stop());
+      } catch {}
+      displayStreamRef.current = null;
+    }
+    setIsSpeakerConnected(false);
+    setAudioSourceType("mic");
+    speakerAnalyserRef.current = null;
+    notify("Disconnected speaker audio. Reverted to microphone only.");
+  }
+
+  async function captureGoogleMeetTabAudio() {
+    await connectSpeakerAudio();
   }
 
   function startVoiceRecording() {
@@ -517,6 +707,8 @@ export default function App() {
     setLiveInterimText("");
     setVoiceWordsCount(0);
     setRecordingSeconds(0);
+    setRecordedAudioUrl(null);
+    recordedChunksRef.current = [];
     setIsRecording(true);
     setMicStatus("listening");
 
@@ -525,7 +717,7 @@ export default function App() {
       restartTimerRef.current = null;
     }
 
-    // 1. Omnidirectional High-Sensitivity Conference Audio Capture & Decibel Meter
+    // 1. Omnidirectional Dual-Channel High-Sensitivity Audio Mixer & Decibel Meter
     async function initAudioMeter() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
       let stream: MediaStream | null = null;
@@ -533,6 +725,7 @@ export default function App() {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: false,
+            noiseSuppression: false,
             autoGainControl: true,
           },
         });
@@ -557,13 +750,69 @@ export default function App() {
           if (ctx.state === "suspended") {
             await ctx.resume();
           }
-          const src = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 64;
-          src.connect(analyser);
-          analyserRef.current = analyser;
 
-          // Active Audio Session Keep-Alive: prevents Chrome from throttling when switching to Google Meet
+          // Master destination node where mic + speaker streams combine
+          const dest = ctx.createMediaStreamDestination();
+          destinationRef.current = dest;
+
+          // Channel 1: Microphone (Voice going out)
+          const micSrc = ctx.createMediaStreamSource(stream);
+          const micGain = ctx.createGain();
+          micGain.gain.value = 1.0;
+          micSrc.connect(micGain);
+          micGain.connect(dest);
+          micGainRef.current = micGain;
+
+          const micAnalyser = ctx.createAnalyser();
+          micAnalyser.fftSize = 64;
+          micGain.connect(micAnalyser);
+          analyserRef.current = micAnalyser;
+
+          // Channel 2: If displayStream (Speaker / System audio) was already active, mix it in
+          if (displayStreamRef.current && displayStreamRef.current.getAudioTracks().length > 0) {
+            try {
+              const spkSrc = ctx.createMediaStreamSource(displayStreamRef.current);
+              const spkGain = ctx.createGain();
+              spkGain.gain.value = 2.0;
+              spkSrc.connect(spkGain);
+              spkGain.connect(dest);
+              speakerGainRef.current = spkGain;
+
+              const spkAnalyser = ctx.createAnalyser();
+              spkAnalyser.fftSize = 64;
+              spkGain.connect(spkAnalyser);
+              speakerAnalyserRef.current = spkAnalyser;
+            } catch (spkErr) {
+              console.warn("Error mixing existing speaker stream:", spkErr);
+            }
+          }
+
+          // Initialize MediaRecorder on the combined master destination stream
+          try {
+            recordedChunksRef.current = [];
+            let mimeType = "audio/webm";
+            if (typeof MediaRecorder !== "undefined") {
+              if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+                mimeType = "audio/webm;codecs=opus";
+              } else if (MediaRecorder.isTypeSupported("audio/webm")) {
+                mimeType = "audio/webm";
+              } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+                mimeType = "audio/mp4";
+              }
+              const recorder = new MediaRecorder(dest.stream, { mimeType, audioBitsPerSecond: 128000 });
+              recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) {
+                  recordedChunksRef.current.push(e.data);
+                }
+              };
+              recorder.start(1000);
+              mediaRecorderRef.current = recorder;
+            }
+          } catch (recErr) {
+            console.warn("MediaRecorder initialization warning:", recErr);
+          }
+
+          // Active Audio Session Keep-Alive: prevents Chrome from throttling when backgrounding
           try {
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
@@ -574,14 +823,30 @@ export default function App() {
             silentOscillatorRef.current = osc;
           } catch {}
 
-          const data = new Uint8Array(analyser.frequencyBinCount);
+          // Dual-Meter Telemetry Poller (Mic Level + Speaker Level)
+          const micData = new Uint8Array(micAnalyser.frequencyBinCount);
           const pollAudio = () => {
             if (!isExplicitlyRecordingRef.current) return;
-            analyser.getByteFrequencyData(data);
-            let sum = 0;
-            for (let i = 0; i < data.length; i++) sum += data[i];
-            const level = Math.min(100, Math.round((sum / data.length) * 2.2));
-            setAudioLevel(level);
+
+            // Mic decibel level
+            micAnalyser.getByteFrequencyData(micData);
+            let micSum = 0;
+            for (let i = 0; i < micData.length; i++) micSum += micData[i];
+            const micLvl = Math.min(100, Math.round((micSum / micData.length) * 2.2));
+            setAudioLevel(micLvl);
+
+            // Speaker / System decibel level
+            if (speakerAnalyserRef.current) {
+              const spkData = new Uint8Array(speakerAnalyserRef.current.frequencyBinCount);
+              speakerAnalyserRef.current.getByteFrequencyData(spkData);
+              let spkSum = 0;
+              for (let i = 0; i < spkData.length; i++) spkSum += spkData[i];
+              const spkLvl = Math.min(100, Math.round((spkSum / spkData.length) * 2.5));
+              setSpeakerAudioLevel(spkLvl);
+            } else {
+              setSpeakerAudioLevel(0);
+            }
+
             animFrameRef.current = requestAnimationFrame(pollAudio);
           };
           pollAudio();
@@ -592,7 +857,7 @@ export default function App() {
     }
     initAudioMeter();
 
-    // 2. Start Continuous Keep-Alive Speech Recognition with Speaker Tracking & Accent Support
+    // 2. Start Continuous Keep-Alive Speech Recognition with Hinglish Normalizer & Speaker Tracking
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -605,7 +870,17 @@ export default function App() {
       const rec = new SpeechRecognition();
       rec.continuous = true;
       rec.interimResults = true;
-      rec.lang = voiceLangRef.current || "en-IN";
+
+      const currentLang = voiceLangRef.current || "en-IN";
+      if (currentLang === "hi-to-hinglish") {
+        rec.lang = "hi-IN";
+      } else if (currentLang === "hi-IN") {
+        rec.lang = "hi-IN";
+      } else if (currentLang === "en-IN") {
+        rec.lang = "en-IN";
+      } else {
+        rec.lang = currentLang;
+      }
       rec.maxAlternatives = 1;
 
       rec.onstart = () => {
@@ -618,7 +893,15 @@ export default function App() {
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const res = event.results[i];
-          const transcript = res[0].transcript;
+          let transcript = res[0].transcript;
+
+          // Apply Hinglish phonetic normalization or Hindi-to-Hinglish transliteration
+          if (voiceLangRef.current === "hi-to-hinglish") {
+            transcript = devanagariToHinglish(transcript);
+          } else if (voiceLangRef.current === "en-IN") {
+            transcript = normalizeHinglishSpoken(transcript);
+          }
+
           if (res.isFinal) {
             newFinalText += transcript + " ";
             const phrase = transcript.trim();
@@ -654,10 +937,6 @@ export default function App() {
 
       rec.onerror = (e: any) => {
         console.warn("Speech recognition event error:", e.error);
-        if (e.error === "no-speech") {
-          // Normal silence timeout, let onend handle clean restart
-          return;
-        }
         if (e.error === "not-allowed" || e.error === "service-not-allowed") {
           isExplicitlyRecordingRef.current = false;
           setIsRecording(false);
@@ -665,9 +944,23 @@ export default function App() {
           notify("Microphone permission denied. Please allow microphone in browser address bar.");
           return;
         }
-        if (e.error === "network") {
-          notify("Speech recognition connection warning. Please check internet connection.");
-          return;
+
+        // Resilient automatic keep-alive restart for network, no-speech, audio-capture glitches
+        if (isExplicitlyRecordingRef.current) {
+          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = setTimeout(() => {
+            if (!isExplicitlyRecordingRef.current) return;
+            try {
+              const nextRec = createRecognizer();
+              if (nextRec) {
+                recognitionRef.current = nextRec;
+                setRecognitionInstance(nextRec);
+                nextRec.start();
+              }
+            } catch (err) {
+              console.warn("Speech recognition recovery restart error:", err);
+            }
+          }, 150);
         }
       };
 
@@ -685,9 +978,9 @@ export default function App() {
                 nextRec.start();
               }
             } catch (err) {
-              console.warn("Safe restart warning:", err);
+              console.warn("Safe speech restart warning:", err);
             }
-          }, 200);
+          }, 120);
         } else {
           setIsRecording(false);
           setMicStatus("idle");
@@ -706,7 +999,7 @@ export default function App() {
         recognitionRef.current = recognizer;
         setRecognitionInstance(recognizer);
         recognizer.start();
-        notify("🎙️ Voice Studio is listening! Speak in English, Hindi, or Hinglish.");
+        notify("🎙️ Voice Studio is listening! Speak in Hinglish, English, or Hindi.");
       }
     } catch (err: any) {
       console.warn("Recognizer start failed:", err);
@@ -728,6 +1021,28 @@ export default function App() {
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch {}
     }
+
+    // Stop MediaRecorder and assemble recorded master audio blob
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      try {
+        mediaRecorderRef.current.onstop = () => {
+          if (recordedChunksRef.current.length > 0) {
+            const mime = mediaRecorderRef.current?.mimeType || "audio/webm";
+            const blob = new Blob(recordedChunksRef.current, { type: mime });
+            const url = URL.createObjectURL(blob);
+            setRecordedAudioUrl(url);
+          }
+        };
+        mediaRecorderRef.current.stop();
+      } catch {}
+    } else if (recordedChunksRef.current.length > 0) {
+      try {
+        const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        setRecordedAudioUrl(url);
+      } catch {}
+    }
+
     if (mediaStreamRef.current) {
       try { mediaStreamRef.current.getTracks().forEach((track: any) => track.stop()); } catch {}
     }
@@ -735,6 +1050,8 @@ export default function App() {
       try { displayStreamRef.current.getTracks().forEach((track: any) => track.stop()); } catch {}
       displayStreamRef.current = null;
     }
+    setIsSpeakerConnected(false);
+
     if (silentOscillatorRef.current) {
       try { silentOscillatorRef.current.stop(); } catch {}
       silentOscillatorRef.current = null;
@@ -746,6 +1063,7 @@ export default function App() {
       cancelAnimationFrame(animFrameRef.current);
     }
     setAudioLevel(0);
+    setSpeakerAudioLevel(0);
     setAudioSourceType("mic");
 
     const captured = (transcriptRef.current || voiceTranscript).trim();
@@ -790,12 +1108,12 @@ export default function App() {
     } else {
       if (!uploadText.trim()) {
         const fallbackText =
-          "Action: Priya must send the revised launch plan by 2026-11-06. Alex has to update the deployment script by Friday.";
-        setUploadTitle("Voice Memo (Sample)");
+          "Action: Priya ko kal tak revised launch plan aur marketing deck submit karna hai. Alex Friday tak deployment script verify karke deploy karega.";
+        setUploadTitle("Voice Memo (Hinglish)");
         setUploadText(fallbackText);
         setVoiceTranscript(fallbackText);
         setVoiceWordsCount(fallbackText.split(/\s+/).filter(Boolean).length);
-        notify("No spoken audio captured. Loaded sample voice action item memo.");
+        notify("No spoken audio captured. Loaded sample Hinglish meeting memo.");
       } else {
         notify("Voice recording ended.");
       }
@@ -805,11 +1123,11 @@ export default function App() {
   function loadDemoVoiceMemo(type: "launch" | "incident" | "strategy") {
     let text = "";
     if (type === "launch") {
-      text = "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck? Priya: I will deliver the revised launch plan and deck by 2026-11-06. Alex: I will verify the database indexes and update the deployment script before Friday.";
+      text = "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck? Priya: Priya ko kal tak revised launch plan aur marketing deck submit karna hai. Alex: Alex Friday tak deployment script verify karke deploy karega.";
     } else if (type === "incident") {
-      text = "Emergency incident response meeting: we detected credential leakage. Alex, revoke all API keys immediately. Alex: Revoking keys now and rotating tokens. Security post-mortem meeting scheduled for 2026-11-04.";
+      text = "Emergency incident response meeting: production database latency high ho gaya hai. Alex: Alex abhi sare compromised API keys revoke karega. Rohan: Rohan post-mortem meeting 2026-11-04 tak schedule karega aur client report share karega.";
     } else {
-      text = "Moving to executive strategy: Sarah, will vendor proposals be completed this month? Sarah: Finalizing Q4 vendor RFP proposals by 2026-11-15. Budget review approved with human signoff.";
+      text = "Moving to executive strategy: Sarah, will vendor proposals be completed this month? Sarah: Sarah ko vendor RFP proposals Monday tak finalize karke submit karna hai, aur Ananya Q4 budget review complete karegi.";
     }
     accumulatedTranscriptRef.current = text;
     transcriptRef.current = text;
@@ -817,55 +1135,7 @@ export default function App() {
     setLiveInterimText("");
     setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
     setUploadText(text);
-    notify("Loaded meeting scenario into Voice Studio!");
-  }
-
-  // Google Meet Tab Audio Capture (Direct digital stream without acoustic echo cancellation)
-  async function captureGoogleMeetTabAudio() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      notify("Tab audio capture is not supported in this browser. Please use Chrome or Edge.");
-      return;
-    }
-    try {
-      notify("Select your Google Meet tab and ensure 'Share tab audio' is checked.");
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: true,
-        },
-      });
-
-      const audioTracks = displayStream.getAudioTracks();
-      if (!audioTracks || audioTracks.length === 0) {
-        notify("⚠️ No audio track found from tab. Make sure 'Also share tab audio' was checked.");
-        displayStream.getTracks().forEach((t: any) => t.stop());
-        return;
-      }
-
-      displayStreamRef.current = displayStream;
-      setAudioSourceType("tab");
-
-      if (audioContextRef.current) {
-        const src = audioContextRef.current.createMediaStreamSource(displayStream);
-        const gain = audioContextRef.current.createGain();
-        gain.gain.value = 2.5; // Boost meeting participants audio
-        src.connect(gain);
-        if (analyserRef.current) gain.connect(analyserRef.current);
-      }
-
-      audioTracks[0].onended = () => {
-        setAudioSourceType("mic");
-        notify("Google Meet tab audio sharing stopped. Reverted to room microphone.");
-      };
-
-      notify("Connected to Google Meet Tab Audio! Recording live meeting.");
-    } catch (err: any) {
-      if (err.name !== "NotAllowedError") {
-        console.warn("Display media warning:", err);
-      }
-    }
+    notify("Loaded Hinglish meeting scenario into Voice Studio!");
   }
 
   // Google Meet Live Captions (CC) / Meeting Transcript Import
@@ -2365,7 +2635,7 @@ export default function App() {
                     Voice Intelligence Studio
                   </b>
                   <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                    Real-time speech-to-intent analysis & evidence extraction
+                    Real-time Hinglish speech model & dual audio (mic + speaker) capture
                   </span>
                 </div>
               </div>
@@ -2379,9 +2649,9 @@ export default function App() {
             </div>
 
             <div className="voice-studio-body">
-              {/* Telemetry Bar */}
+              {/* Telemetry Bar with Dual Decibel Meters */}
               <div className="voice-telemetry-row">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span
                     style={{
                       display: "inline-flex",
@@ -2402,7 +2672,7 @@ export default function App() {
                         boxShadow: isRecording ? "0 0 8px rgba(239, 68, 68, 0.7)" : "none",
                       }}
                     />
-                    {isRecording ? "LISTENING (CONTINUOUS)" : "RECORDING PAUSED"}
+                    {isRecording ? (isSpeakerConnected ? "DUAL LISTENING (MIC + SPEAKER)" : "MIC LISTENING (CONTINUOUS)") : "RECORDING PAUSED"}
                   </span>
                   <span style={{ color: "var(--border-card)" }}>|</span>
                   <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
@@ -2415,38 +2685,85 @@ export default function App() {
                   </span>
                 </div>
 
-                <div className="voice-meter-wrap" title="Microphone Input Level">
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Mic Level</span>
-                  <div className="voice-meter-track">
-                    <div
-                      className="voice-meter-fill"
-                      style={{ width: `${Math.max(8, isRecording ? audioLevel : 0)}%` }}
-                    />
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  {/* Mic Level (Voice going out) */}
+                  <div className="voice-meter-wrap" title="Microphone Level (Voice Going Out)">
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>🎙️ Mic</span>
+                    <div className="voice-meter-track">
+                      <div
+                        className="voice-meter-fill"
+                        style={{ width: `${Math.max(8, isRecording ? audioLevel : 0)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Speaker Level (Voice coming in via meeting / system) */}
+                  <div className="voice-meter-wrap" title="Speaker / Meeting Audio Level (Voice Coming In)">
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>🔊 Speaker</span>
+                    <div className="voice-meter-track">
+                      <div
+                        className="voice-meter-fill"
+                        style={{
+                          width: `${Math.max(8, isRecording && isSpeakerConnected ? speakerAudioLevel : 0)}%`,
+                          background: isSpeakerConnected
+                            ? "linear-gradient(90deg, #3b82f6, #8b5cf6)"
+                            : "rgba(255, 255, 255, 0.12)",
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Meeting Session Status, Google Meet Tools & Language Control */}
+              {/* Meeting Session Status, Google Meet Tools & Hinglish Language Control */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "14px 0 12px", flexWrap: "wrap", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span className="live-meeting-badge">
-                    <span className="live-meeting-dot" /> LIVE MEETING
+                    <span className="live-meeting-dot" /> {isSpeakerConnected ? "DUAL-CHANNEL ACTIVE" : "MIC ACTIVE"}
                   </span>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                    Source: {audioSourceType === "tab" ? "💻 Google Meet Tab Audio" : "🎙️ Room Microphone"}
-                  </span>
+                  {isSpeakerConnected ? (
+                    <span className="voice-source-badge connected">
+                      <Volume2 size={12} /> 💻 Speaker / Tab Audio Linked
+                    </span>
+                  ) : (
+                    <span className="voice-source-badge">
+                      🎙️ Room Microphone Only
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    className="btn"
-                    style={{ fontSize: 11, padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 5 }}
-                    onClick={captureGoogleMeetTabAudio}
-                    title="Capture digital audio directly from your Google Meet tab (works even with headphones)"
-                  >
-                    <Monitor size={12} /> Google Meet Audio
-                  </button>
+                  {!isSpeakerConnected ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{
+                        fontSize: 11,
+                        padding: "5px 10px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        background: "rgba(59, 130, 246, 0.12)",
+                        color: "#3b82f6",
+                        borderColor: "rgba(59, 130, 246, 0.35)",
+                        fontWeight: 600,
+                      }}
+                      onClick={connectSpeakerAudio}
+                      title="Connect Google Meet / Zoom tab or system audio to record both speakers and mic together"
+                    >
+                      <Monitor size={12} /> + Link Speaker / Meet Audio
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ fontSize: 11, padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 5 }}
+                      onClick={disconnectSpeakerAudio}
+                      title="Disconnect speaker audio and revert to room microphone"
+                    >
+                      <Volume2 size={12} /> Disconnect Speaker
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -2459,7 +2776,7 @@ export default function App() {
                   </button>
 
                   <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Accent:</span>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Language:</span>
                     <select
                       value={voiceLang}
                       onChange={(e) => handleLanguageChange(e.target.value)}
@@ -2473,9 +2790,10 @@ export default function App() {
                         cursor: "pointer",
                       }}
                     >
-                      <option value="en-IN">🇮🇳 English (India / Hinglish)</option>
-                      <option value="en-US">🇺🇸 English (US)</option>
-                      <option value="hi-IN">🇮🇳 Hindi (हिन्दी)</option>
+                      <option value="en-IN">🇮🇳 Hinglish (India / Hindi-English mix)</option>
+                      <option value="hi-to-hinglish">🇮🇳 Hindi ➔ Roman Hinglish (Auto-Transliterate)</option>
+                      <option value="hi-IN">🇮🇳 Pure Hindi (हिन्दी लिपि)</option>
+                      <option value="en-US">🇺🇸 English (US / Global)</option>
                       <option value="en-GB">🇬🇧 English (UK)</option>
                     </select>
                   </div>
@@ -2535,39 +2853,59 @@ export default function App() {
                 ) : (
                   <div className="voice-empty-prompt">
                     <p>
-                      🎙️ <b>Start speaking naturally into your microphone...</b>
+                      🎙️ <b>Start speaking in Hinglish, English, or Hindi — or play your meeting audio...</b>
                       <br />
-                      The microphone captures everyone speaking in the room and live-transcribes into meeting notes.
+                      ActionPilot captures both what you say into your microphone AND what participants say through your device speakers!
                     </p>
                     <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                      Quick pitch samples (click to test immediately):
+                      Quick Hinglish pitch samples (click to test immediately):
                       <div className="voice-sample-chips">
                         <button
                           type="button"
                           className="voice-chip"
                           onClick={() => loadDemoVoiceMemo("launch")}
                         >
-                          🚀 Launch Sync (Priya deadline & review)
+                          🚀 Hinglish Launch Sync (Priya deadline & review)
                         </button>
                         <button
                           type="button"
                           className="voice-chip"
                           onClick={() => loadDemoVoiceMemo("incident")}
                         >
-                          🚨 Security Incident (Alex API revoke)
+                          🚨 Hinglish Incident (Alex API revoke & fix)
                         </button>
                         <button
                           type="button"
                           className="voice-chip"
                           onClick={() => loadDemoVoiceMemo("strategy")}
                         >
-                          📊 Strategy Offsite (Sarah RFP milestones)
+                          📊 Hinglish Strategy (Sarah RFP & budget)
                         </button>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
+
+              {/* Recorded Audio Playback & Download Bar */}
+              {recordedAudioUrl && (
+                <div className="voice-audio-preview">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 5 }}>
+                      <Headphones size={13} color="var(--primary)" /> Master Dual-Audio Recording (Mic + Speaker Mixed)
+                    </span>
+                    <a
+                      href={recordedAudioUrl}
+                      download={`ActionPilot_Meeting_${Date.now()}.webm`}
+                      className="btn"
+                      style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}
+                    >
+                      <Download size={12} /> Download Audio (.webm)
+                    </a>
+                  </div>
+                  <audio controls src={recordedAudioUrl} style={{ width: "100%", height: 36 }} />
+                </div>
+              )}
 
               {/* Detected Action Indicator */}
               {voiceTranscript && (
@@ -2582,10 +2920,11 @@ export default function App() {
                     borderRadius: "var(--radius-md)",
                     fontSize: 12,
                     color: "var(--primary)",
+                    marginTop: 8,
                   }}
                 >
                   <span style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
-                    <Sparkles size={14} /> AI Ready: Evidence-linked extraction will parse actions & assignees
+                    <Sparkles size={14} /> AI Ready: Evidence-linked extraction will parse Hinglish actions & assignees
                   </span>
                   <span style={{ fontSize: 11, opacity: 0.85 }}>Human approval gate active</span>
                 </div>
@@ -2852,6 +3191,25 @@ export default function App() {
                 </button>
               )}
             </div>
+
+            {recordedAudioUrl && (
+              <div className="voice-audio-preview" style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 5 }}>
+                    <Headphones size={13} color="var(--primary)" /> Dual Master Audio Recording (Mic + Speaker Mixed)
+                  </span>
+                  <a
+                    href={recordedAudioUrl}
+                    download={`ActionPilot_Meeting_${Date.now()}.webm`}
+                    className="btn"
+                    style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}
+                  >
+                    <Download size={12} /> Download Audio (.webm)
+                  </a>
+                </div>
+                <audio controls src={recordedAudioUrl} style={{ width: "100%", height: 36 }} />
+              </div>
+            )}
 
             {voiceTranscript && (
               <div className="voice-transcript-card" style={{ marginBottom: 16 }}>

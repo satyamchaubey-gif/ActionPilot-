@@ -2285,6 +2285,38 @@ a {
   transition: width 0.08s ease-out;
 }
 
+.voice-audio-preview {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin: 12px 0 4px;
+}
+
+.voice-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border-card);
+  background: var(--bg-hover);
+}
+
+.voice-source-badge.connected {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.voice-source-badge.waiting {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
 .voice-transcript-canvas {
   background: var(--bg-base);
   border: 1px solid var(--border-card);
