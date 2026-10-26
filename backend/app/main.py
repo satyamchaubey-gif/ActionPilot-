@@ -1,5 +1,5 @@
 import hashlib, json, os, uuid, logging, re, urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 import httpx
@@ -78,8 +78,11 @@ async def ingest(title: str, filename: Optional[str], content: str, user_id: str
     with db.connect() as c:
         old = c.execute("SELECT * FROM documents WHERE user_id=? AND content_hash=?", (user_id, digest)).fetchone()
         if old:
-            audit(c, "document", old["id"], "duplicate_ingestion_skipped", {"sha256": digest}, actor=actor, user_id=user_id)
-            return old["id"], True
+            # Check if this document has tasks currently in database
+            existing_tasks = c.execute("SELECT count(*) FROM tasks WHERE document_id=? AND user_id=?", (old["id"], user_id)).fetchone()[0]
+            if existing_tasks > 0:
+                audit(c, "document", old["id"], "duplicate_ingestion_skipped", {"sha256": digest, "existing_tasks": existing_tasks}, actor=actor, user_id=user_id)
+                return old["id"], True
 
     result = await extract_tasks(content, filename or title)
     did = uid()
@@ -87,8 +90,10 @@ async def ingest(title: str, filename: Optional[str], content: str, user_id: str
     with db.connect() as c:
         old = c.execute("SELECT * FROM documents WHERE user_id=? AND content_hash=?", (user_id, digest)).fetchone()
         if old:
-            audit(c, "document", old["id"], "duplicate_ingestion_skipped", {"sha256": digest}, actor=actor, user_id=user_id)
-            return old["id"], True
+            existing_tasks = c.execute("SELECT count(*) FROM tasks WHERE document_id=? AND user_id=?", (old["id"], user_id)).fetchone()[0]
+            if existing_tasks > 0:
+                audit(c, "document", old["id"], "duplicate_ingestion_skipped", {"sha256": digest, "existing_tasks": existing_tasks}, actor=actor, user_id=user_id)
+                return old["id"], True
 
         c.execute(
             "INSERT INTO documents(id,user_id,title,filename,content,content_hash,created_at,status) VALUES(?,?,?,?,?,?,?,?)",
@@ -446,8 +451,10 @@ async def upload_document(
 ):
     name = file.filename or "upload.txt"
     suffix = Path(name).suffix.lower()
-    if suffix not in (".txt", ".md", ".csv", ".pdf"):
-        raise HTTPException(415, "Supported formats: TXT, Markdown, CSV, PDF")
+    if suffix in (".mp3", ".wav", ".m4a", ".webm", ".ogg"):
+        raise HTTPException(400, "For audio notes, please use the Voice Studio recorder or paste the transcript into notes.")
+    if suffix not in (".txt", ".md", ".csv", ".pdf", ".json", ".log"):
+        raise HTTPException(415, "Supported formats: TXT, Markdown, CSV, PDF, JSON, LOG")
     raw = await file.read()
     if len(raw) > 10 * 1024 * 1024:
         raise HTTPException(413, "Maximum upload size is 10 MB")
@@ -547,8 +554,8 @@ def edit_task(
         old = c.execute("SELECT * FROM tasks WHERE id=? AND user_id=?", (tid, current_user["id"])).fetchone()
         if not old:
             raise HTTPException(404, "Task not found")
-        if old["status"] not in ("proposed", "rejected"):
-            raise HTTPException(409, "Only proposed/rejected tasks can be edited")
+        if old["status"] not in ("proposed", "rejected", "approved"):
+            raise HTTPException(409, f"Cannot edit task in state {old['status']}")
 
         before = {k: old[k] for k in changes}
         set_clauses = []
@@ -577,7 +584,7 @@ def approve(tid: str, current_user: dict = Depends(get_current_user)):
             raise HTTPException(404, "Task not found")
         if t["status"] == "approved":
             return {"task_id": tid, "status": "approved", "idempotent": True}
-        if t["status"] != "proposed":
+        if t["status"] not in ("proposed", "rejected"):
             raise HTTPException(409, f"Cannot approve task in state {t['status']}")
         flags = json.loads(t["uncertainty_flags"])
         c.execute("UPDATE tasks SET status='approved', updated_at=? WHERE id=? AND user_id=?", (now(), tid, current_user["id"]))
@@ -647,11 +654,18 @@ async def dispatch_task(
         # 1. Google Calendar Integration
         if channel == "calendar":
             due_str = task.get("due_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            cal_date = due_str.replace("-", "")
+            try:
+                d_obj = datetime.strptime(due_str, "%Y-%m-%d").date()
+                end_obj = d_obj + timedelta(days=1)
+                cal_start = d_obj.strftime("%Y%m%d")
+                cal_end = end_obj.strftime("%Y%m%d")
+            except Exception:
+                cal_start = due_str.replace("-", "")
+                cal_end = cal_start
             title_encoded = urllib.parse.quote(f"ActionPilot: {task['title']}")
             details = f"{task['description']}\n\nVerified Evidence: {evidence_quote}\nAudit ID: {tid}"
             details_encoded = urllib.parse.quote(details)
-            cal_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={title_encoded}&dates={cal_date}/{cal_date}&details={details_encoded}"
+            cal_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={title_encoded}&dates={cal_start}/{cal_end}&details={details_encoded}"
             dispatch_result["calendar_url"] = cal_url
             dispatch_result["message"] = "Google Calendar event URL generated successfully!"
 

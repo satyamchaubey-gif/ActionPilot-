@@ -521,6 +521,7 @@ export default function App() {
       await refresh();
       setShowIngest(false);
       setUploadText("");
+      setStatusFilter("all");
       setActive("tasks");
       notify(r.duplicate ? "Duplicate note detected — existing tasks displayed in workspace." : "🎙️ Voice memo analyzed and evidence-linked tasks extracted!");
     } catch (e: any) {
@@ -1163,6 +1164,7 @@ export default function App() {
         body: JSON.stringify({ preset_id: presetId }),
       });
       await refresh();
+      setStatusFilter("all");
       setActive("tasks");
       notify(`⚡ Demo loaded: ${res.title}`);
     } catch (e: any) {
@@ -1399,6 +1401,7 @@ export default function App() {
       const r = await req("/api/documents", { method: "POST", body: f });
       await refresh();
       setShowIngest(false);
+      setStatusFilter("all");
       setActive("tasks");
       notify(r.duplicate ? "Duplicate document skipped" : "Document processed and tasks extracted");
     } catch (e: any) {
@@ -1809,6 +1812,7 @@ export default function App() {
           ["tasks", ListTodo, "Task review"],
           ["documents", FileText, "Source documents"],
           ["history", Clock, "History"],
+          ["audit", History, "Audit trail"],
         ].map(([id, Icon, label]: any) => (
           <button
             key={id}
@@ -3399,7 +3403,6 @@ export default function App() {
               <label>Task title</label>
               <input
                 className="input"
-                disabled={selected.status === "approved"}
                 value={edit.title}
                 onChange={(e) => setEdit({ ...edit, title: e.target.value })}
               />
@@ -3407,7 +3410,6 @@ export default function App() {
               <textarea
                 className="input"
                 rows={3}
-                disabled={selected.status === "approved"}
                 value={edit.description}
                 onChange={(e) => setEdit({ ...edit, description: e.target.value })}
               />
@@ -3416,7 +3418,6 @@ export default function App() {
                   <label>Assignee</label>
                   <input
                     className="input"
-                    disabled={selected.status === "approved"}
                     value={edit.assignee}
                     onChange={(e) => setEdit({ ...edit, assignee: e.target.value })}
                     placeholder="Unassigned"
@@ -3427,7 +3428,6 @@ export default function App() {
                   <input
                     className="input"
                     type="date"
-                    disabled={selected.status === "approved"}
                     value={edit.due_date}
                     onChange={(e) => setEdit({ ...edit, due_date: e.target.value })}
                   />
@@ -3436,7 +3436,6 @@ export default function App() {
               <label>Priority</label>
               <select
                 className="input"
-                disabled={selected.status === "approved"}
                 value={edit.priority}
                 onChange={(e) => setEdit({ ...edit, priority: e.target.value })}
               >
@@ -3504,12 +3503,32 @@ export default function App() {
                 </>
               )}
               {selected.status === "approved" && (
-                <button
-                  className="primary full"
-                  onClick={() => openDispatchModal(selected)}
-                >
-                  <Zap size={15} /> Dispatch Action (Calendar / Slack / GitHub)
-                </button>
+                <div style={{ display: "flex", gap: 8, width: "100%", justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="secondary" onClick={saveTask}>
+                      Save edits
+                    </button>
+                    <button className="danger" onClick={() => taskAction(selected.id, "reject")}>
+                      Reject / Revert
+                    </button>
+                  </div>
+                  <button
+                    className="primary"
+                    onClick={() => openDispatchModal(selected)}
+                  >
+                    <Zap size={15} /> Dispatch Action
+                  </button>
+                </div>
+              )}
+              {selected.status === "rejected" && (
+                <div style={{ display: "flex", gap: 8, width: "100%", justifyContent: "space-between" }}>
+                  <button className="secondary" onClick={saveTask}>
+                    Save edits
+                  </button>
+                  <button className="primary" onClick={() => taskAction(selected.id, "approve")}>
+                    <Check size={15} /> Restore & Approve
+                  </button>
+                </div>
               )}
             </div>
           </aside>
@@ -3562,81 +3581,90 @@ export default function App() {
       )}
 
       {/* Feature 4 Modal: Quick AI Conflict Resolver popup */}
-      {conflictModalTask && (
-        <div
-          className="backdrop top"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setConflictModalTask(null);
-          }}
-        >
-          <section className="modal">
-            <div className="modalhead">
-              <div>
-                <div className="eyebrow" style={{ color: "#ef4444" }}>
-                  <AlertTriangle size={13} /> CONFLICT DETECTED
-                </div>
-                <h2>Discrepancy Resolution</h2>
-                <p>Task: "{conflictModalTask.title}"</p>
-              </div>
-              <button className="iconbtn" onClick={() => setConflictModalTask(null)}>
-                <X />
-              </button>
-            </div>
+      {conflictModalTask && (() => {
+        const conflictFlag = conflictModalTask.uncertainty_flags.find((f) =>
+          f.toLowerCase().includes("conflict")
+        ) || "";
+        const match = conflictFlag.match(/\((\d{4}-\d{2}-\d{2})\s+vs\s+(\d{4}-\d{2}-\d{2})\)/);
+        const initialDate = match ? match[1] : (conflictModalTask.due_date || "2026-11-02");
+        const supersedingDate = match ? match[2] : (initialDate === "2026-11-02" ? "2026-11-06" : initialDate);
 
-            <div className="conflict-resolver-box">
-              <p>
-                Two contradictory deadlines were extracted for this action item:
-              </p>
-              <div className="conflict-dates-row">
-                <div className="conflict-date-badge">
-                  <span>Initial Meeting Note:</span>
-                  <b>{dateLabel(conflictModalTask.due_date)}</b>
+        return (
+          <div
+            className="backdrop top"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setConflictModalTask(null);
+            }}
+          >
+            <section className="modal">
+              <div className="modalhead">
+                <div>
+                  <div className="eyebrow" style={{ color: "#ef4444" }}>
+                    <AlertTriangle size={13} /> CONFLICT DETECTED
+                  </div>
+                  <h2>Discrepancy Resolution</h2>
+                  <p>Task: "{conflictModalTask.title}"</p>
                 </div>
-                <div className="conflict-date-badge" style={{ borderColor: "rgba(239, 68, 68, 0.5)", background: "rgba(239, 68, 68, 0.1)" }}>
-                  <span>Client Confirmation:</span>
-                  <b>Nov 6, 2026 (Superseding)</b>
-                </div>
-              </div>
-              <p style={{ fontSize: 12, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>
-                💡 <b>Resolution Note:</b> Client confirmations supersede earlier internal drafts. Recommend adopting <b>2026-11-06</b>.
-              </p>
-            </div>
-
-            <div className="modalfoot">
-              <button className="secondary" onClick={() => setConflictModalTask(null)}>
-                Cancel
-              </button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    resolveTaskConflict(
-                      conflictModalTask,
-                      conflictModalTask.due_date || "2026-11-02",
-                      "Retained initial internal date"
-                    )
-                  }
-                >
-                  Keep {conflictModalTask.due_date}
-                </button>
-                <button
-                  className="primary"
-                  style={{ background: "#ef4444", borderColor: "#dc2626" }}
-                  onClick={() =>
-                    resolveTaskConflict(
-                      conflictModalTask,
-                      "2026-11-06",
-                      "Adopted client confirmed date per ActionPilot resolution"
-                    )
-                  }
-                >
-                  <Zap size={14} /> Adopt 2026-11-06
+                <button className="iconbtn" onClick={() => setConflictModalTask(null)}>
+                  <X />
                 </button>
               </div>
-            </div>
-          </section>
-        </div>
-      )}
+
+              <div className="conflict-resolver-box">
+                <p>
+                  Two contradictory deadlines were extracted for this action item:
+                </p>
+                <div className="conflict-dates-row">
+                  <div className="conflict-date-badge">
+                    <span>Initial Meeting Note:</span>
+                    <b>{dateLabel(initialDate)}</b>
+                  </div>
+                  <div className="conflict-date-badge" style={{ borderColor: "rgba(239, 68, 68, 0.5)", background: "rgba(239, 68, 68, 0.1)" }}>
+                    <span>Superseding Mention:</span>
+                    <b>{dateLabel(supersedingDate)} (Updated)</b>
+                  </div>
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: 0, lineHeight: 1.5 }}>
+                  💡 <b>AI Recommendation:</b> Client confirmations and later discussions usually supersede initial drafts. Recommend adopting <b>{dateLabel(supersedingDate)}</b>.
+                </p>
+              </div>
+
+              <div className="modalfoot">
+                <button className="secondary" onClick={() => setConflictModalTask(null)}>
+                  Cancel
+                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      resolveTaskConflict(
+                        conflictModalTask,
+                        initialDate,
+                        `Retained initial date (${initialDate})`
+                      )
+                    }
+                  >
+                    Keep {initialDate}
+                  </button>
+                  <button
+                    className="primary"
+                    style={{ background: "#ef4444", borderColor: "#dc2626" }}
+                    onClick={() =>
+                      resolveTaskConflict(
+                        conflictModalTask,
+                        supersedingDate,
+                        `Adopted superseding date (${supersedingDate}) per ActionPilot resolution`
+                      )
+                    }
+                  >
+                    <Zap size={14} /> Adopt {supersedingDate}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
 
       {/* Feature 5 Modal: One-Click Action Dispatcher (Google Calendar / Slack / GitHub / Email) */}
       {dispatchModalOpen && dispatchTask && (
@@ -3977,7 +4005,7 @@ function TaskCard({
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {t.status === "proposed" && (
             <div className="actions">
               <button className="dangertext" onClick={reject}>
@@ -3994,6 +4022,14 @@ function TaskCard({
                 <CheckCheck size={15} /> Approved
               </span>
               <button
+                className="subtle"
+                style={{ fontSize: 11, padding: "4px 8px" }}
+                onClick={reject}
+                title="Revert to rejected"
+              >
+                Revert
+              </button>
+              <button
                 className="primary"
                 style={{
                   padding: "6px 12px",
@@ -4004,6 +4040,13 @@ function TaskCard({
                 <Zap size={13} /> Dispatch Action
               </button>
             </>
+          )}
+          {t.status === "rejected" && (
+            <div className="actions">
+              <button className="approve" onClick={approve} title="Restore and approve this task">
+                <Check size={14} /> Restore
+              </button>
+            </div>
           )}
         </div>
       </div>
