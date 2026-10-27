@@ -62,3 +62,14 @@ Open http://localhost:5173. API docs: http://127.0.0.1:8000/docs.
 - **Sign In / Sign Up**: App starts on the Sign In / Sign Up page.
 - **Tenant Isolation**: Every user gets their own private workspace.
 - **Gmail / Email Verification**: 6-digit OTP code with development auto-fill badge.
+
+### 👤 Pre-Loaded Demo Accounts with Sample Scenarios
+ActionPilot auto-seeds full sample scenarios into the workspace for immediate evaluation:
+- **Demo Account Email**: `satyamchaubey471@gmail.com` (or `satayamchaubey471@gmail.com` / `judge@hackathon.com`)
+- **Password**: `password123`
+- **Included Scenarios**:
+  - **Product Launch Sync (Q4)**: Conflicting client deadlines (Nov 2 vs Nov 6), onboarding checklist draft, and Google Calendar dispatched FAQ.
+  - **Security Incident Response (Sev-1)**: Accelerated API credential rotation deadline, VPC egress audit task, and Slack webhook dispatch.
+  - **Executive Offsite & Strategy**: Board committee budget revision, vendor RFP evaluation dispatched to GitHub, and keynote logistics.
+  - **Multilingual Voice Studio Notes**: 3 recorded Hinglish & English voice memos with live speaker transcripts.
+  - **Immutable Audit Trail**: Chronological ledger of all ingestions, extractions, conflict flags, approvals, and dispatches.

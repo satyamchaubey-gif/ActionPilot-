@@ -1669,6 +1669,23 @@ export default function App() {
                     Sign In to Workspace
                   </button>
 
+                  <div style={{ marginTop: 12, padding: "10px", background: "rgba(255, 255, 255, 0.03)", borderRadius: 8, border: "1px dashed rgba(255, 255, 255, 0.15)", textAlign: "center" }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 6 }}>
+                      ⚡ Demo Evaluation Account
+                    </div>
+                    <button
+                      type="button"
+                      className="auth-link"
+                      style={{ fontSize: 12, color: "#60a5fa", fontWeight: 600 }}
+                      onClick={() => {
+                        setAuthEmail("satyamchaubey471@gmail.com");
+                        setAuthPassword("password123");
+                      }}
+                    >
+                      Fill Demo: satyamchaubey471@gmail.com
+                    </button>
+                  </div>
+
                   <div style={{ textAlign: "center", marginTop: 8 }}>
                     <span style={{ fontSize: 11, color: "#94a3b8" }}>Don't have an account? </span>
                     <button

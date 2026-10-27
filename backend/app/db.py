@@ -481,15 +481,7 @@ def init_db():
             if "dispatch_channel" not in task_cols:
                 c.execute("ALTER TABLE tasks ADD COLUMN dispatch_channel TEXT")
 
-        # Auto-seed default judge / demo account if users table is empty and not running under tests
+        # Auto-seed demo accounts with complete sample scenarios (unless running under tests)
         if not os.getenv("PYTEST_CURRENT_TEST"):
-            has_user = c.execute("SELECT 1 FROM users LIMIT 1").fetchone()
-            if not has_user:
-                demo_uid = "usr_demo_judge_2026"
-                demo_email = "judge@hackathon.com"
-                demo_hash = "pbkdf2:sha256:100000:fd052e4409164df363712ecf694269db:c386ce1b0fd4bb0b99d7153714fc4df88163903b00ee9a45dd2a77107d01a285"  # password123
-                demo_now = "2026-10-25T00:00:00+00:00"
-                c.execute(
-                    "INSERT INTO users(id, email, password_hash, full_name, is_verified, created_at) VALUES(?,?,?,?,1,?)",
-                    (demo_uid, demo_email, demo_hash, "Hackathon Judge", demo_now)
-                )
+            from .seed import seed_all_demo_users
+            seed_all_demo_users(c)

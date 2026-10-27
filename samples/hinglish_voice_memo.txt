@@ -1,0 +1,5 @@
+Alex: Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck?
+Priya: Priya ko kal tak revised launch plan aur marketing deck submit karna hai.
+Alex: Perfect, Alex Friday tak deployment script verify karke deploy karega.
+Rohan: Rohan post-mortem meeting 2026-11-04 tak schedule karega aur client report share karega.
+Sarah: Sarah ko vendor RFP proposals Monday tak finalize karke submit karna hai, aur Ananya Q4 budget review complete karegi.

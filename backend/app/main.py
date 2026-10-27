@@ -195,6 +195,11 @@ def verify_email(payload: VerifyEmail):
     with db.connect() as c:
         c.execute("UPDATE users SET is_verified=1 WHERE id=?", (user["id"],))
         audit(c, "user", user["id"], "user_email_verified", {"email": email}, actor=email, user_id=user["id"])
+        if not os.getenv("PYTEST_CURRENT_TEST"):
+            from .seed import seed_user_scenarios
+            task_cnt = c.execute("SELECT count(*) FROM tasks WHERE user_id=?", (user["id"],)).fetchone()[0]
+            if task_cnt == 0:
+                seed_user_scenarios(c, user["id"], email)
 
     user["is_verified"] = True
     token = create_access_token(user["id"], user["email"])
@@ -252,6 +257,11 @@ def login(payload: UserLogin):
             )
 
         audit(c, "user", user_id, "user_logged_in", {"email": email}, actor=email, user_id=user_id)
+        if not os.getenv("PYTEST_CURRENT_TEST"):
+            from .seed import seed_user_scenarios
+            task_cnt = c.execute("SELECT count(*) FROM tasks WHERE user_id=?", (user_id,)).fetchone()[0]
+            if task_cnt == 0:
+                seed_user_scenarios(c, user_id, email)
 
     prefs = user.get("preferences") or {}
     if isinstance(prefs, str):

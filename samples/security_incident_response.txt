@@ -1,0 +1,7 @@
+Incident Response Call — Severity 1 Alert
+
+URGENT Action: DevSecOps team must rotate the compromised API credentials by 2026-10-24. Blocker for deployment.
+URGENT Action: DevSecOps team must rotate the compromised API credentials by 2026-10-23. Security lead confirmed rotation deadline was moved up.
+Action: Please audit VPC egress traffic logs by 2026-10-25.
+Owner: Rahul — notify external SOC audit partners by 2026-10-26.
+Security team recommends enforcing MFA across all tenant accounts.
