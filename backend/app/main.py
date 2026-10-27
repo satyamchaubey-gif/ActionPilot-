@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 import httpx
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -373,51 +373,52 @@ def update_profile(
 # Meetings & Voice Notes History
 # -------------------------------------------------------------
 
+from .voice_engine import diarize_conversation
+
 @app.post("/api/voice/transcribe", response_model=VoiceTranscriptionResponse)
 async def transcribe_voice(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    interim_transcript: str = Form(""),
+    speaker_turns: str = Form("[]"),
     current_user: dict = Depends(get_current_user)
 ):
-    # In a production environment, we would use OpenAI Whisper or Deepgram here.
-    # For the purpose of this fix, we implement a high-fidelity simulation that
-    # handles the "latency" and "clarity" issues by processing the audio.
+    turns_data = []
+    if speaker_turns:
+        try:
+            turns_data = json.loads(speaker_turns)
+        except Exception:
+            turns_data = []
 
-    # 1. Save temporary file
-    temp_path = f"temp_{uuid().bin}.wav"
-    with open(temp_path, "wb") as f:
-        f.write(await file.read())
+    audio_bytes = b""
+    if file:
+        try:
+            audio_bytes = await file.read()
+        except Exception as e:
+            logging.getLogger("actionpilot").warning(f"Audio file read warning: {e}")
 
-    try:
-        # Simulate high-fidelity AI processing (Whisper-style)
-        # In real implementation:
-        # async with httpx.AsyncClient() as client:
-        #     r = await client.post("https://api.openai.com/v1/audio/transcriptions", ...)
+    unified_text, detected_speakers, diarized_list = diarize_conversation(
+        raw_transcript=interim_transcript,
+        raw_turns=turns_data
+    )
 
-        # For now, we simulate the improved quality and diarization
-        # To show the user it's working, we'll use the content of the file to "simulate" a better transcript
-        # if it's a demo file, or just return a polished version.
+    with db.connect() as c:
+        audit(
+            c, "voice", uid(), "voice_transcribed",
+            {
+                "speaker_count": len(detected_speakers),
+                "speakers": detected_speakers,
+                "word_count": len(unified_text.split()),
+                "audio_size_bytes": len(audio_bytes)
+            },
+            actor=current_user["email"],
+            user_id=current_user["id"]
+        )
 
-        # This is where the actual STT integration happens.
-        # We'll return a high-quality transcript with speaker labels.
-
-        # Mocking the response to demonstrate the "Resolution"
-        import time
-        time.sleep(1) # Simulate processing time (though professional APIs are faster)
-
-        # For the demo, we'll use a generic high-quality response if the file is small
-        # or we could actually use a local library if installed.
-
-        return {
-            "transcript": "High-fidelity transcription completed. (Professional STT active)",
-            "speakers": ["Speaker 1", "Speaker 2"],
-            "diarized_text": [
-                {"speaker": "Speaker 1", "text": "Hello, let's start the meeting."},
-                {"speaker": "Speaker 2", "text": "Agreed, I have the report ready."}
-            ]
-        }
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    return {
+        "transcript": unified_text,
+        "speakers": detected_speakers,
+        "diarized_text": diarized_list
+    }
 
 @app.get("/api/meetings")
 def list_meetings(

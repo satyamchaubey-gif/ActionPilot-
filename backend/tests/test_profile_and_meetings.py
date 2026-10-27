@@ -73,3 +73,29 @@ def test_profile_update_and_meetings_history():
     r_del = client.delete(f"/api/meetings/{mid}", headers=headers)
     assert r_del.status_code == 200
     assert len(client.get("/api/meetings", headers=headers).json()) == 0
+
+def test_voice_transcription_and_diarization():
+    client = TestClient(app)
+
+    # 1. Sign up user
+    r_signup = client.post("/api/auth/signup", json={"email": "voice@example.com", "password": "password123", "full_name": "Voice Tester"})
+    token = client.post("/api/auth/verify-email", json={"email": "voice@example.com", "code": r_signup.json().get("dev_code")}).json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 2. Call /api/voice/transcribe with multi-voice dialogue
+    res = client.post(
+        "/api/voice/transcribe",
+        data={
+            "interim_transcript": "Alex: Let's sync on Q4 targets. Priya ko kal tak launch plan submit karna hai.",
+            "speaker_turns": '[{"speaker": "Alex", "text": "Let\'s sync on Q4 targets."}, {"speaker": "Priya", "text": "Priya ko kal tak launch plan submit karna hai."}]'
+        },
+        files={"file": ("test.webm", b"mock audio content", "audio/webm")},
+        headers=headers
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "Alex" in data["speakers"]
+    assert "Priya" in data["speakers"]
+    assert len(data["diarized_text"]) == 2
+    assert "Alex:" in data["transcript"]
+    assert "Priya:" in data["transcript"]

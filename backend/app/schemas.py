@@ -117,6 +117,9 @@ class ConflictResolution(BaseModel):
     resolved_due_date: str
     rationale: str = "Resolved by human review"
 
+class VoiceTranscriptionRequest(BaseModel):
+    interim_transcript: str = ""
+
 class VoiceTranscriptionResponse(BaseModel):
     transcript: str
     speakers: list[str] = Field(default_factory=list)

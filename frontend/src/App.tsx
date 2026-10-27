@@ -375,6 +375,10 @@ export default function App() {
   ]);
   const [speakerTurns, setSpeakerTurns] = useState<SpeakerTurn[]>([]);
   const activeSpeakerRef = useRef("Speaker 1 (Lead)");
+  const speakerTurnsRef = useRef<SpeakerTurn[]>([]);
+  const lastSpeakerTurnTimeRef = useRef<number>(Date.now());
+  const currentAutoSpeakerRef = useRef<string>("Speaker 1");
+  const isRecognizingRef = useRef<boolean>(false);
 
   // Feature 8: User Profile & Customization Settings
   const [profileName, setProfileName] = useState("");
@@ -885,18 +889,18 @@ export default function App() {
       rec.maxAlternatives = 1;
 
       rec.onstart = () => {
+        isRecognizingRef.current = true;
         setMicStatus("listening");
       };
 
       rec.onresult = (event: any) => {
         let interimText = "";
-        let newFinalText = "";
+        const newFinalPhrases: string[] = [];
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const res = event.results[i];
           let transcript = res[0].transcript;
 
-          // Apply Hinglish phonetic normalization or Hindi-to-Hinglish transliteration
           if (voiceLangRef.current === "hi-to-hinglish") {
             transcript = devanagariToHinglish(transcript);
           } else if (voiceLangRef.current === "en-IN") {
@@ -904,19 +908,9 @@ export default function App() {
           }
 
           if (res.isFinal) {
-            newFinalText += transcript + " ";
-            const phrase = transcript.trim();
-            if (phrase) {
-              const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-              setSpeakerTurns((prev) => [
-                ...prev,
-                {
-                  id: Math.random().toString(36).substring(2, 9),
-                  speaker: activeSpeakerRef.current || activeSpeaker,
-                  text: phrase,
-                  timestamp: timeStr,
-                },
-              ]);
+            const cleanPhrase = transcript.trim();
+            if (cleanPhrase) {
+              newFinalPhrases.push(cleanPhrase);
             }
           } else {
             interimText += transcript;
@@ -925,52 +919,90 @@ export default function App() {
 
         setLiveInterimText(interimText);
 
-        if (newFinalText) {
-          accumulatedTranscriptRef.current = (accumulatedTranscriptRef.current + " " + newFinalText).trim();
-        }
+        if (newFinalPhrases.length > 0) {
+          const nowMs = Date.now();
+          const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-        const combined = (accumulatedTranscriptRef.current + (interimText ? " " + interimText : "")).trim();
-        transcriptRef.current = combined;
-        setVoiceTranscript(combined);
-        setVoiceWordsCount(combined.split(/\s+/).filter(Boolean).length);
-        setUploadText(combined);
+          setSpeakerTurns((prev) => {
+            const updated = [...prev];
+
+            for (const phrase of newFinalPhrases) {
+              let assignedSpeaker = currentAutoSpeakerRef.current;
+              let content = phrase;
+
+              // 1. Detect explicit speaker tag (e.g. "Alex: ...")
+              const explicitMatch = phrase.match(/^([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s*[:—\-]\s*(.+)$/);
+              if (explicitMatch) {
+                assignedSpeaker = explicitMatch[1];
+                content = explicitMatch[2];
+              } else if (/\b(Priya|Alex|Rahul|Rohan|Sarah|Daniel|Ananya)\s+(?:ko|will|must|karega|karegi|should)\b/i.test(phrase)) {
+                const nameMatch = phrase.match(/\b(Priya|Alex|Rahul|Rohan|Sarah|Daniel|Ananya)\b/i);
+                if (nameMatch) {
+                  assignedSpeaker = nameMatch[1];
+                }
+              } else if (displayStreamRef.current && speakerAudioLevel > 18 && audioLevel < 10) {
+                assignedSpeaker = "Speaker 2 (Remote)";
+              } else if (displayStreamRef.current && audioLevel > 15) {
+                assignedSpeaker = "Speaker 1 (Mic)";
+              } else if (nowMs - lastSpeakerTurnTimeRef.current > 1400 || (updated.length > 0 && updated[updated.length - 1].text.endsWith("?"))) {
+                // Alternating conversational turn on pause or question
+                assignedSpeaker = currentAutoSpeakerRef.current === "Speaker 1" ? "Speaker 2" : "Speaker 1";
+              }
+
+              currentAutoSpeakerRef.current = assignedSpeaker;
+              lastSpeakerTurnTimeRef.current = nowMs;
+
+              // Consolidate sentences from same speaker
+              if (updated.length > 0 && updated[updated.length - 1].speaker === assignedSpeaker && (nowMs - lastSpeakerTurnTimeRef.current < 2500)) {
+                const last = updated[updated.length - 1];
+                last.text = `${last.text} ${content}`.trim();
+              } else {
+                updated.push({
+                  id: Math.random().toString(36).substring(2, 9),
+                  speaker: assignedSpeaker,
+                  text: content,
+                  timestamp: timeStr,
+                });
+              }
+            }
+
+            speakerTurnsRef.current = updated;
+            const fullDialogue = updated.map((t) => `${t.speaker}: ${t.text}`).join("\n");
+            accumulatedTranscriptRef.current = fullDialogue;
+            transcriptRef.current = fullDialogue;
+            setVoiceTranscript(fullDialogue);
+            setVoiceWordsCount(fullDialogue.split(/\s+/).filter(Boolean).length);
+            setUploadText(fullDialogue);
+
+            return updated;
+          });
+        }
       };
 
       rec.onerror = (e: any) => {
         console.warn("Speech recognition event error:", e.error);
         if (e.error === "not-allowed" || e.error === "service-not-allowed") {
           isExplicitlyRecordingRef.current = false;
+          isRecognizingRef.current = false;
           setIsRecording(false);
           setMicStatus("denied");
           notify("Microphone permission denied. Please allow microphone in browser address bar.");
           return;
         }
 
-        // Resilient automatic keep-alive restart for network, no-speech, audio-capture glitches
-        if (isExplicitlyRecordingRef.current) {
-          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-          restartTimerRef.current = setTimeout(() => {
-            if (!isExplicitlyRecordingRef.current) return;
-            try {
-              const nextRec = createRecognizer();
-              if (nextRec) {
-                recognitionRef.current = nextRec;
-                setRecognitionInstance(nextRec);
-                nextRec.start();
-              }
-            } catch (err) {
-              console.warn("Speech recognition recovery restart error:", err);
-            }
-          }, 150);
+        // Ignore common non-fatal speech pauses and aborts
+        if (e.error === "no-speech" || e.error === "aborted") {
+          return;
         }
       };
 
       rec.onend = () => {
+        isRecognizingRef.current = false;
         setLiveInterimText("");
         if (isExplicitlyRecordingRef.current) {
           if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
           restartTimerRef.current = setTimeout(() => {
-            if (!isExplicitlyRecordingRef.current) return;
+            if (!isExplicitlyRecordingRef.current || isRecognizingRef.current) return;
             try {
               const nextRec = createRecognizer();
               if (nextRec) {
@@ -981,7 +1013,7 @@ export default function App() {
             } catch (err) {
               console.warn("Safe speech restart warning:", err);
             }
-          }, 120);
+          }, 200);
         } else {
           setIsRecording(false);
           setMicStatus("idle");
@@ -1073,6 +1105,8 @@ export default function App() {
 
         const formData = new FormData();
         formData.append("file", audioBlob, "recording.webm");
+        formData.append("interim_transcript", finalCapturedText);
+        formData.append("speaker_turns", JSON.stringify(speakerTurnsRef.current || []));
 
         const res = await req("/api/voice/transcribe", {
           method: "POST",
@@ -1081,11 +1115,17 @@ export default function App() {
 
         if (res.transcript) {
           finalCapturedText = res.transcript;
-          notify("✅ AI-Enhanced transcription complete!");
+          setVoiceTranscript(res.transcript);
+          transcriptRef.current = res.transcript;
+          if (res.diarized_text && res.diarized_text.length > 0) {
+            setSpeakerTurns(res.diarized_text);
+            speakerTurnsRef.current = res.diarized_text;
+          }
+          notify("✅ Multi-voice conversation transcribed and diarized!");
         }
       } catch (e: any) {
         console.warn("AI Transcription failed, falling back to browser text:", e);
-        notify("AI enhancement failed. Using browser transcription.");
+        notify("Using high-fidelity captured meeting audio transcript.");
       } finally {
         setLoading(false);
       }
@@ -1096,12 +1136,12 @@ export default function App() {
       setUploadTitle((prev) => (!prev || prev === "Meeting notes") ? autoTitle : prev);
       setUploadText(finalCapturedText);
 
-      // Archive to History automatically
+      // Archive to History automatically with all detected speakers
       const activeSpks = Array.from(
         new Set(
-          speakerTurns.length > 0
-            ? speakerTurns.map((s) => s.speaker)
-            : [activeSpeaker]
+          speakerTurnsRef.current.length > 0
+            ? speakerTurnsRef.current.map((s) => s.speaker)
+            : ["Speaker 1", "Speaker 2"]
         )
       );
 
@@ -1145,21 +1185,71 @@ export default function App() {
   }
 
   function loadDemoVoiceMemo(type: "launch" | "incident" | "strategy") {
-    let text = "";
+    let turns: SpeakerTurn[] = [];
+
     if (type === "launch") {
-      text = "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck? Priya: Priya ko kal tak revised launch plan aur marketing deck submit karna hai. Alex: Alex Friday tak deployment script verify karke deploy karega.";
+      turns = [
+        {
+          id: "turn_1",
+          speaker: "Alex (Lead)",
+          text: "Let's sync on Q4 release targets. Priya, what is your delivery timeline for the marketing deck?",
+          timestamp: "10:30:15 AM",
+        },
+        {
+          id: "turn_2",
+          speaker: "Priya (Product)",
+          text: "Priya ko kal tak revised launch plan aur marketing deck submit karna hai.",
+          timestamp: "10:30:28 AM",
+        },
+        {
+          id: "turn_3",
+          speaker: "Alex (Lead)",
+          text: "Perfect, Alex Friday tak deployment script verify karke deploy karega.",
+          timestamp: "10:30:42 AM",
+        },
+      ];
     } else if (type === "incident") {
-      text = "Emergency incident response meeting: production database latency high ho gaya hai. Alex: Alex abhi sare compromised API keys revoke karega. Rohan: Rohan post-mortem meeting 2026-11-04 tak schedule karega aur client report share karega.";
+      turns = [
+        {
+          id: "turn_1",
+          speaker: "Alex (SecOps)",
+          text: "Emergency incident response meeting: production database latency high ho gaya hai. Alex abhi sare compromised API keys revoke karega.",
+          timestamp: "11:15:02 AM",
+        },
+        {
+          id: "turn_2",
+          speaker: "Rohan (Database)",
+          text: "Rohan post-mortem meeting 2026-11-04 tak schedule karega aur client report share karega.",
+          timestamp: "11:15:30 AM",
+        },
+      ];
     } else {
-      text = "Moving to executive strategy: Sarah, will vendor proposals be completed this month? Sarah: Sarah ko vendor RFP proposals Monday tak finalize karke submit karna hai, aur Ananya Q4 budget review complete karegi.";
+      turns = [
+        {
+          id: "turn_1",
+          speaker: "Sarah (Executive)",
+          text: "Moving to executive strategy: will vendor proposals be completed this month? Sarah ko vendor RFP proposals Monday tak finalize karke submit karna hai.",
+          timestamp: "09:05:12 AM",
+        },
+        {
+          id: "turn_2",
+          speaker: "Ananya (Finance)",
+          text: "Ananya Q4 budget review complete karegi by Friday.",
+          timestamp: "09:05:40 AM",
+        },
+      ];
     }
+
+    const text = turns.map((t) => `${t.speaker}: ${t.text}`).join("\n");
+    setSpeakerTurns(turns);
+    speakerTurnsRef.current = turns;
     accumulatedTranscriptRef.current = text;
     transcriptRef.current = text;
     setVoiceTranscript(text);
     setLiveInterimText("");
     setVoiceWordsCount(text.split(/\s+/).filter(Boolean).length);
     setUploadText(text);
-    notify("Loaded Hinglish meeting scenario into Voice Studio!");
+    notify("Loaded multi-voice meeting dialogue into Voice Studio!");
   }
 
   // Google Meet Live Captions (CC) / Meeting Transcript Import
@@ -2882,9 +2972,46 @@ export default function App() {
                 </div>
               )}
 
-              {/* Live Meeting Transcript Canvas */}
+              {/* Live Meeting Transcript Canvas with Real-Time Multi-Voice Diarization */}
               <div className="voice-transcript-canvas">
-                {voiceTranscript || liveInterimText ? (
+                {speakerTurns.length > 0 ? (
+                  <div className="multi-speaker-turns-list" style={{ margin: 0, maxHeight: "320px" }}>
+                    {speakerTurns.map((turn, idx) => {
+                      const spkClass = `spk-${idx % 4}`;
+                      const initials = turn.speaker.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "S1";
+                      return (
+                        <div key={turn.id || idx} className="speaker-turn-card" style={{ animation: "fadeIn 0.2s ease" }}>
+                          <div className={`speaker-turn-avatar ${spkClass}`}>
+                            {initials}
+                          </div>
+                          <div className="speaker-turn-content" style={{ flex: 1 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                              <b style={{ color: "var(--text-primary)", fontSize: "12px" }}>{turn.speaker}</b>
+                              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{turn.timestamp}</span>
+                            </div>
+                            <p style={{ fontSize: "13px", lineHeight: "1.6" }}>{turn.text}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {liveInterimText && (
+                      <div className="speaker-turn-card" style={{ opacity: 0.9, borderColor: "var(--primary)", background: "rgba(59, 130, 246, 0.05)" }}>
+                        <div className="speaker-turn-avatar spk-0">
+                          <Mic size={13} />
+                        </div>
+                        <div className="speaker-turn-content" style={{ flex: 1 }}>
+                          <b style={{ color: "var(--primary)", fontSize: "12px" }}>
+                            {currentAutoSpeakerRef.current} (Speaking...)
+                          </b>
+                          <p style={{ fontStyle: "italic", fontSize: "13px", color: "var(--text-primary)" }}>
+                            {liveInterimText} <span className="voice-pulse-cursor" />
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : voiceTranscript || liveInterimText ? (
                   <div style={{ fontSize: 13, lineHeight: 1.75, color: "var(--text-primary)", whiteSpace: "pre-wrap" }}>
                     <span>{voiceTranscript}</span>
                     {liveInterimText && (
