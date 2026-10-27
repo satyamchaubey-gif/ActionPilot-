@@ -117,5 +117,10 @@ class ConflictResolution(BaseModel):
     resolved_due_date: str
     rationale: str = "Resolved by human review"
 
+class VoiceTranscriptionResponse(BaseModel):
+    transcript: str
+    speakers: list[str] = Field(default_factory=list)
+    diarized_text: list[dict] = Field(default_factory=list)
+
 class DemoPresetRequest(BaseModel):
     preset_id: Literal["product_launch", "security_incident", "exec_offsite"] = "product_launch"

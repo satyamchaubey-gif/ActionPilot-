@@ -1008,7 +1008,7 @@ export default function App() {
     }
   }
 
-  function stopVoiceRecording(autoExtract: boolean = false) {
+  async function stopVoiceRecording(autoExtract: boolean = false) {
     isExplicitlyRecordingRef.current = false;
     setIsRecording(false);
     setLiveInterimText("");
@@ -1023,25 +1023,21 @@ export default function App() {
       try { recognitionRef.current.stop(); } catch {}
     }
 
-    // Stop MediaRecorder and assemble recorded master audio blob
+    // 1. Stop MediaRecorder and get the audio blob
+    let audioBlob: Blob | null = null;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
-        mediaRecorderRef.current.onstop = () => {
-          if (recordedChunksRef.current.length > 0) {
-            const mime = mediaRecorderRef.current?.mimeType || "audio/webm";
-            const blob = new Blob(recordedChunksRef.current, { type: mime });
-            const url = URL.createObjectURL(blob);
-            setRecordedAudioUrl(url);
-          }
-        };
+        // We create a promise to wait for the onstop event if needed,
+        // but since we have the chunks, we can just assemble it.
         mediaRecorderRef.current.stop();
       } catch {}
-    } else if (recordedChunksRef.current.length > 0) {
-      try {
-        const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setRecordedAudioUrl(url);
-      } catch {}
+    }
+
+    if (recordedChunksRef.current.length > 0) {
+      const mime = mediaRecorderRef.current?.mimeType || "audio/webm";
+      audioBlob = new Blob(recordedChunksRef.current, { type: mime });
+      const url = URL.createObjectURL(audioBlob);
+      setRecordedAudioUrl(url);
     }
 
     if (mediaStreamRef.current) {
@@ -1067,11 +1063,38 @@ export default function App() {
     setSpeakerAudioLevel(0);
     setAudioSourceType("mic");
 
-    const captured = (transcriptRef.current || voiceTranscript).trim();
-    if (captured) {
+    // 2. High-Fidelity AI Transcription Upgrade
+    let finalCapturedText = (transcriptRef.current || voiceTranscript).trim();
+
+    if (audioBlob) {
+      try {
+        setLoading(true);
+        notify("🚀 Enhancing transcription with AI High-Fidelity model...");
+
+        const formData = new FormData();
+        formData.append("file", audioBlob, "recording.webm");
+
+        const res = await req("/api/voice/transcribe", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (res.transcript) {
+          finalCapturedText = res.transcript;
+          notify("✅ AI-Enhanced transcription complete!");
+        }
+      } catch (e: any) {
+        console.warn("AI Transcription failed, falling back to browser text:", e);
+        notify("AI enhancement failed. Using browser transcription.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (finalCapturedText) {
       const autoTitle = "Meeting Recording (" + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")";
       setUploadTitle((prev) => (!prev || prev === "Meeting notes") ? autoTitle : prev);
-      setUploadText(captured);
+      setUploadText(finalCapturedText);
 
       // Archive to History automatically
       const activeSpks = Array.from(
@@ -1088,7 +1111,7 @@ export default function App() {
         body: JSON.stringify({
           title: autoTitle,
           duration_seconds: recordingSeconds,
-          transcript: captured,
+          transcript: finalCapturedText,
           speakers: activeSpks,
           task_count: 0,
         }),
@@ -1100,7 +1123,7 @@ export default function App() {
       if (autoExtract) {
         setVoiceStudioOpen(false);
         notify("🎙️ Meeting saved to History! Analyzing tasks now...");
-        executeIngest(autoTitle, captured);
+        executeIngest(autoTitle, finalCapturedText);
       } else {
         setVoiceStudioOpen(false);
         setShowIngest(true);
